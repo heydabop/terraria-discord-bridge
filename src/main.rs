@@ -1,7 +1,6 @@
 mod handler;
 
-extern crate ctrlc;
-
+use regex::Regex;
 use serde::Deserialize;
 use serenity::client::Client;
 use serenity::framework::standard::StandardFramework;
@@ -62,6 +61,9 @@ fn send_loglines(
     let mut file = File::open(filename)?;
     let mut pos = file.metadata()?.len();
 
+    // Look for chat messages, joins, and leaves
+    let send_regex = Regex::new("(^<.+>.+$|^.+ has joined\\.$|^.+ has left\\.$)").unwrap();
+
     thread::spawn(move || {
         file.seek(SeekFrom::Start(pos))
             .expect("Unable to seek to end of logfile");
@@ -70,7 +72,8 @@ fn send_loglines(
             let bytes = file
                 .read_to_string(&mut line)
                 .expect("Unable to read line from logfile");
-            if !line.is_empty() {
+            let line = line.trim();
+            if !line.is_empty() && send_regex.is_match(line) {
                 if let Err(e) = channel_id.say(&http, line) {
                     eprintln!("Unable to send logline to discord: {}", e);
                 }
