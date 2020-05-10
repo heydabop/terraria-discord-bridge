@@ -1,5 +1,7 @@
 mod handler;
 
+extern crate ctrlc;
+
 use serenity::client::Client;
 use serenity::framework::standard::{macros::group, StandardFramework};
 
@@ -35,6 +37,14 @@ fn main() {
             .configure(|c| c.prefix("!"))
             .group(&TERRARIA_GROUP),
     );
+
+    let manager = client.shard_manager.clone();
+
+    if let Err(e) = ctrlc::set_handler(move || {
+        manager.lock().shutdown_all();
+    }) {
+        eprintln!("Error setting SIGINT handler: {}", e);
+    }
 
     if let Err(e) = client.start() {
         eprintln!("An error occurred while running the client: {:?}", e);
