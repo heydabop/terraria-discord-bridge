@@ -2,6 +2,7 @@ mod handler;
 
 extern crate ctrlc;
 
+use serde::Deserialize;
 use serenity::client::Client;
 use serenity::framework::standard::{macros::group, StandardFramework};
 use serenity::http::Http;
@@ -15,36 +16,25 @@ use std::thread;
 #[group]
 struct Terraria;
 
+#[derive(Deserialize)]
+struct Config {
+    bot_token: String,
+    server_url: Option<String>,
+    bridge_channel_id: u64,
+    server_logfile: String,
+}
+
 fn main() {
-    let config = std::fs::read_to_string("config.toml")
-        .expect("Error reading config.toml")
-        .parse::<toml::Value>()
-        .expect("Error parsing config.toml");
-
-    let bot_token = config["bot_token"]
-        .as_str()
-        .expect("config.toml missing bot_token");
-
-    let server_logfile = config["server_logfile"]
-        .as_str()
-        .expect("config.toml missing server_logfile");
-
-    let bridge_channel_id = config["bridge_channel_id"]
-        .as_str()
-        .expect("config.toml missing bridge_channel_id")
-        .parse::<u64>()
-        .expect("bridge_channel_id not u64");
+    let cfg: Config =
+        toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
+            .expect("Error parsing config.toml");
 
     let client_handler = handler::Handler {
-        playing: config["server_url"]
-            .as_str()
-            .or(Some(""))
-            .unwrap()
-            .to_string(),
-        bridge_channel_id,
+        playing: cfg.server_url,
+        bridge_channel_id: cfg.bridge_channel_id,
     };
 
-    let mut client = Client::new(bot_token, client_handler).expect("Error creating client");
+    let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
     client.with_framework(
         StandardFramework::new()
             .configure(|c| c.prefix("!"))
@@ -60,9 +50,9 @@ fn main() {
     }
 
     send_loglines(
-        server_logfile,
+        &cfg.server_logfile,
         client.cache_and_http.http.clone(),
-        ChannelId(bridge_channel_id),
+        ChannelId(cfg.bridge_channel_id),
     )
     .expect("Unable to start log file thread");
 

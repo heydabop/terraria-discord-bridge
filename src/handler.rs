@@ -7,7 +7,7 @@ use serenity::{
 };
 
 pub struct Handler {
-    pub playing: String,
+    pub playing: Option<String>,
     pub bridge_channel_id: u64,
 }
 
@@ -20,6 +20,8 @@ impl EventHandler for Handler {
     }
 
     fn ready(&self, ctx: Context, _: Ready) {
-        ctx.set_activity(Activity::playing(&self.playing));
+        if let Some(playing) = &self.playing {
+            ctx.set_activity(Activity::playing(playing));
+        }
     }
 }

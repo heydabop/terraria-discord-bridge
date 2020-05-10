@@ -1119,6 +1119,7 @@ name = "terraria-discord"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "serde",
  "serenity",
  "toml",
 ]
