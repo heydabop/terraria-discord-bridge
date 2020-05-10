@@ -1,10 +1,6 @@
-use serenity::{
-    model::{
-        channel::Message,
-        gateway::{Activity, Ready},
-    },
-    prelude::*,
-};
+use serenity::model::channel::Message;
+use serenity::model::gateway::{Activity, Ready};
+use serenity::prelude::*;
 
 pub struct Handler {
     pub playing: Option<String>,

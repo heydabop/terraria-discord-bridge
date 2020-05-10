@@ -4,7 +4,7 @@ extern crate ctrlc;
 
 use serde::Deserialize;
 use serenity::client::Client;
-use serenity::framework::standard::{macros::group, StandardFramework};
+use serenity::framework::standard::StandardFramework;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
 use std::error::Error;
@@ -12,9 +12,6 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::thread;
-
-#[group]
-struct Terraria;
 
 #[derive(Deserialize)]
 struct Config {
@@ -35,11 +32,7 @@ fn main() {
     };
 
     let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
-    client.with_framework(
-        StandardFramework::new()
-            .configure(|c| c.prefix("!"))
-            .group(&TERRARIA_GROUP),
-    );
+    client.with_framework(StandardFramework::new().configure(|c| c.prefix("!")));
 
     let shutdown_manager = client.shard_manager.clone();
 
