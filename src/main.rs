@@ -6,11 +6,18 @@ use serenity::client::Client;
 use serenity::framework::standard::StandardFramework;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
+use serenity::prelude::*;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::thread;
+
+struct ServerInPipe;
+
+impl TypeMapKey for ServerInPipe {
+    type Value = File;
+}
 
 #[derive(Deserialize)]
 struct Config {
@@ -18,12 +25,18 @@ struct Config {
     server_url: Option<String>,
     bridge_channel_id: u64,
     server_logfile: String,
+    server_in_pipe: String,
 }
 
 fn main() {
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
+
+    let server_in_pipe = OpenOptions::new()
+        .append(true)
+        .open(cfg.server_in_pipe)
+        .expect("Unable to open server_in_pipe");
 
     let client_handler = handler::Handler {
         playing: cfg.server_url,
@@ -32,6 +45,11 @@ fn main() {
 
     let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
     client.with_framework(StandardFramework::new().configure(|c| c.prefix("!")));
+
+    {
+        let mut data = client.data.write();
+        data.insert::<ServerInPipe>(server_in_pipe);
+    }
 
     let shutdown_manager = client.shard_manager.clone();
 
@@ -63,6 +81,7 @@ fn send_loglines(
 
     // Look for chat messages, joins, and leaves
     let send_regex = Regex::new("(^<.+>.+$|^.+ has joined\\.$|^.+ has left\\.$)").unwrap();
+    let server_regex = Regex::new("^<Server>.+$").unwrap();
 
     thread::spawn(move || {
         file.seek(SeekFrom::Start(pos))
@@ -73,7 +92,7 @@ fn send_loglines(
                 .read_to_string(&mut line)
                 .expect("Unable to read line from logfile");
             let line = line.trim();
-            if !line.is_empty() && send_regex.is_match(line) {
+            if !line.is_empty() && send_regex.is_match(line) && !server_regex.is_match(line) {
                 if let Err(e) = channel_id.say(&http, line) {
                     eprintln!("Unable to send logline to discord: {}", e);
                 }
