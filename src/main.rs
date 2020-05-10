@@ -33,8 +33,10 @@ fn main() {
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
 
+    // Get handle to server stdin named pipe
     let server_in_pipe = OpenOptions::new()
         .append(true)
+        .create(false)
         .open(cfg.server_in_pipe)
         .expect("Unable to open server_in_pipe");
 
@@ -47,12 +49,13 @@ fn main() {
     client.with_framework(StandardFramework::new().configure(|c| c.prefix("!")));
 
     {
+        // Add server stdin named pipe to client's shared data
         let mut data = client.data.write();
         data.insert::<ServerInPipe>(server_in_pipe);
     }
 
+    // Handle SIGINT and SIGTERM and shutdown client before killing
     let shutdown_manager = client.shard_manager.clone();
-
     if let Err(e) = ctrlc::set_handler(move || {
         shutdown_manager.lock().shutdown_all();
     }) {
@@ -71,6 +74,7 @@ fn main() {
     }
 }
 
+// "tail"s server logfile, sending new lines to discord
 fn send_loglines(
     filename: &str,
     http: Arc<Http>,
@@ -84,22 +88,25 @@ fn send_loglines(
     let server_regex = Regex::new("^<Server>.+$").unwrap();
 
     thread::spawn(move || {
-        file.seek(SeekFrom::Start(pos))
-            .expect("Unable to seek to end of logfile");
         loop {
+            // Seek to end of file so we block on read instead of getting EOF
+            file.seek(SeekFrom::Start(pos))
+                .expect("Unable to seek to end of logfile");
+
             let mut line = String::new();
             let bytes = file
                 .read_to_string(&mut line)
                 .expect("Unable to read line from logfile");
             let line = line.trim();
+
+            // If line has content and matches one of the lines we want to send to discord
             if !line.is_empty() && send_regex.is_match(line) && !server_regex.is_match(line) {
                 if let Err(e) = channel_id.say(&http, line) {
                     eprintln!("Unable to send logline to discord: {}", e);
                 }
             }
+            // Record new offset to re-seek to end of file
             pos += bytes as u64;
-            file.seek(SeekFrom::Start(pos))
-                .expect("Unable to re-seek to end of logfile");
         }
     });
 
