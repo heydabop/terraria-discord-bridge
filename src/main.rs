@@ -22,6 +22,11 @@ fn main() {
             .or(Some(""))
             .unwrap()
             .to_string(),
+        bridge_channel_id: config["bridge_channel_id"]
+            .as_str()
+            .expect("config.toml missing bridge_channel_id")
+            .parse::<u64>()
+            .expect("bridge_channel_id not u64"),
     };
 
     let mut client = Client::new(bot_token, client_handler).expect("Error creating client");

@@ -1,2 +1,3 @@
 bot_token = ""
 server_url = "" #optional
+bridge_channel_id = ""
