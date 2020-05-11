@@ -708,6 +708,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcap"
+version = "0.1.0"
+
+[[package]]
 name = "percent-encoding"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1146,6 +1150,7 @@ name = "terraria-discord"
 version = "0.1.0"
 dependencies = [
  "ctrlc",
+ "pcap",
  "regex",
  "serde",
  "serenity",

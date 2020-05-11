@@ -1,4 +1,5 @@
 mod handler;
+mod terraria_pcap;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -18,6 +19,7 @@ struct Config {
     server_url: Option<String>,
     bridge_channel_id: u64,
     server_logfile: String,
+    pcap_file: Option<String>,
 }
 
 fn main() {
@@ -47,6 +49,15 @@ fn main() {
         ChannelId(cfg.bridge_channel_id),
     )
     .expect("Unable to start log file thread");
+
+    if let Some(pcap_file) = cfg.pcap_file {
+        terraria_pcap::parse_packets(
+            &pcap_file,
+            client.cache_and_http.http.clone(),
+            ChannelId(cfg.bridge_channel_id),
+        )
+        .expect("Unable to start packet parsing thread");
+    }
 
     if let Err(e) = client.start() {
         eprintln!("An error occurred while running the client: {:?}", e);
