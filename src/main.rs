@@ -6,18 +6,11 @@ use serenity::client::Client;
 use serenity::framework::standard::StandardFramework;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
-use serenity::prelude::*;
 use std::error::Error;
-use std::fs::{File, OpenOptions};
+use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::thread;
-
-struct ServerInPipe;
-
-impl TypeMapKey for ServerInPipe {
-    type Value = File;
-}
 
 #[derive(Deserialize)]
 struct Config {
@@ -25,20 +18,12 @@ struct Config {
     server_url: Option<String>,
     bridge_channel_id: u64,
     server_logfile: String,
-    server_in_pipe: String,
 }
 
 fn main() {
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
-
-    // Get handle to server stdin named pipe
-    let server_in_pipe = OpenOptions::new()
-        .append(true)
-        .create(false)
-        .open(cfg.server_in_pipe)
-        .expect("Unable to open server_in_pipe");
 
     let client_handler = handler::Handler {
         playing: cfg.server_url,
@@ -47,12 +32,6 @@ fn main() {
 
     let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
     client.with_framework(StandardFramework::new().configure(|c| c.prefix("!")));
-
-    {
-        // Add server stdin named pipe to client's shared data
-        let mut data = client.data.write();
-        data.insert::<ServerInPipe>(server_in_pipe);
-    }
 
     // Handle SIGINT and SIGTERM and shutdown client before killing
     let shutdown_manager = client.shard_manager.clone();
