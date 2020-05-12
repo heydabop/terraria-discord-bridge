@@ -9,8 +9,8 @@ use serenity::framework::standard::StandardFramework;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
 use std::error::Error;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 
@@ -54,7 +54,7 @@ fn main() {
     terraria_pcap::parse_packets(
         client.cache_and_http.http.clone(),
         ChannelId(cfg.bridge_channel_id),
-        cfg.tcpdump_interface,
+        &cfg.tcpdump_interface,
     )
     .expect("Unable to start packet parsing thread");
 
@@ -69,23 +69,24 @@ fn send_loglines(
     http: Arc<Http>,
     channel_id: ChannelId,
 ) -> Result<(), Box<dyn Error>> {
-    let mut file = File::open(filename)?;
-    let mut pos = file.metadata()?.len();
+    let tail = Command::new("tail")
+        .stdout(Stdio::piped())
+        .args(&["-n", "0", "-F", filename])
+        .spawn()?;
 
     // Look for chat messages, joins, and leaves
     let send_regex = Regex::new("(^<.+>.+$|^.+ has joined\\.$|^.+ has left\\.$)").unwrap();
     let server_regex = Regex::new("^<Server>.+$").unwrap();
 
+    let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
+
     thread::spawn(move || {
         loop {
-            // Seek to end of file so we block on read instead of getting EOF
-            file.seek(SeekFrom::Start(pos))
-                .expect("Unable to seek to end of logfile");
-
             let mut line = String::new();
-            let bytes = file
-                .read_to_string(&mut line)
-                .expect("Unable to read line from logfile");
+            if let Err(e) = reader.read_line(&mut line) {
+                eprintln!("Error reading from tail stdout: {}", e);
+                continue;
+            }
             let line = line.trim();
 
             // If line has content and matches one of the lines we want to send to discord
@@ -94,8 +95,6 @@ fn send_loglines(
                     eprintln!("Unable to send logline to discord: {}", e);
                 }
             }
-            // Record new offset to re-seek to end of file
-            pos += bytes as u64;
         }
     });
 

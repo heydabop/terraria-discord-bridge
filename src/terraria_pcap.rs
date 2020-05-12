@@ -27,13 +27,13 @@ impl Error for MissingDeathData {}
 pub fn parse_packets(
     http: Arc<Http>,
     channel_id: ChannelId,
-    tcpdump_interface: String,
+    tcpdump_interface: &str,
 ) -> Result<(), Box<dyn Error>> {
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
         .args(&[
             "-i",
-            &tcpdump_interface,
+            tcpdump_interface,
             "tcp",
             "src",
             "port",
