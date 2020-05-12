@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+#[allow(clippy::too_many_lines)]
 pub fn get() -> HashMap<&'static str, &'static str> {
     [
         ("IronPickaxe", "Iron Pickaxe"),
