@@ -1,9 +1,27 @@
+use crate::strings;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
+use std::collections::HashMap;
 use std::error::Error;
+use std::fmt;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
+
+const STRING_START: usize = 7;
+
+#[derive(Debug)]
+struct MissingDeathData {
+    pub desc: String,
+}
+
+impl fmt::Display for MissingDeathData {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.desc)
+    }
+}
+
+impl Error for MissingDeathData {}
 
 // read pcap file of server output looking for relevant messages
 pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<dyn Error>> {
@@ -13,6 +31,8 @@ pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<d
         .spawn()?;
 
     let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))?;
+
+    let strings = strings::get();
 
     thread::spawn(move || loop {
         match reader.read_packet() {
@@ -44,15 +64,33 @@ pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<d
                         // death messages start with "Death"
                         continue;
                     }
-                    match get_string(&data, 7) {
+                    match get_string(&data, STRING_START) {
                         Err(e) => {
                             eprintln!("Unable to parse string: {}", e);
                             continue;
                         }
-                        Ok(first_string) => {
-                            println!("{}", first_string);
-                            if let Err(e) = channel_id.say(&http, first_string) {
-                                eprintln!("Unable to send logline to discord: {}", e);
+                        Ok(death_type) => {
+                            // Have first string in message, should be DeathSource.xxx or DeathText.xxx
+                            match if death_type.find("DeathSource.") == Some(0) {
+                                assemble_death_source(&data, &death_type, &strings)
+                            } else if death_type.find("DeathText.") == Some(0) {
+                                assemble_death_text(&data, &death_type, &strings)
+                            } else {
+                                Err(MissingDeathData {
+                                    desc: (format!("Unknown death cause: {}", death_type)),
+                                })
+                            } {
+                                Err(e) => {
+                                    eprintln!("Error assembling death message: {}", e);
+                                    if let Err(e) = channel_id.say(&http, death_type) {
+                                        eprintln!("Unable to send death notice to discord: {}", e);
+                                    }
+                                }
+                                Ok(msg) => {
+                                    if let Err(e) = channel_id.say(&http, msg) {
+                                        eprintln!("Unable to send death notice to discord: {}", e);
+                                    }
+                                }
                             }
                         }
                     };
@@ -64,7 +102,137 @@ pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<d
     Ok(())
 }
 
-pub fn get_string<'a>(packet: &'a [u8], start: usize) -> Result<&'a str, std::str::Utf8Error> {
+// Find string starting at start, strings appear to be length followed by the string
+// ex [5Death], [8Terraria]
+fn get_string(packet: &[u8], start: usize) -> Result<&str, std::str::Utf8Error> {
     let length = packet[start] as usize;
-    std::str::from_utf8(&packet[start + 1..start + length + 1])
+    std::str::from_utf8(&packet[start + 1..=start + length])
+}
+
+// Takes a string of "s1.s2" and finds it in our hashmaps looking for strings["s1"]["s2]
+// ex. "DeathSource.Player" would result in strings["DeathSource"]["Player"] -> "{0} by {1}'s {2}."
+fn lookup_string<'a>(
+    s: &'a str,
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+) -> Option<&'static str> {
+    match s.find('.') {
+        None => None,
+        Some(i) => {
+            let s1 = &s[0..i];
+            let s2 = &s[i + 1..s.len()];
+            match strings.get(s1) {
+                None => None,
+                Some(strings) => match strings.get(s2) {
+                    None => None,
+                    Some(s_final) => Some(s_final),
+                },
+            }
+        }
+    }
+}
+
+fn assemble_death_source(
+    packet: &[u8],
+    base_lookup: &str,
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+) -> Result<String, MissingDeathData> {
+    let mut offset = STRING_START + base_lookup.len() + 3;
+    match lookup_string(base_lookup, strings) {
+        None => Err(MissingDeathData {
+            desc: format!("Unknown death source: {}", base_lookup),
+        }),
+        Some(base) => match get_string(&packet, offset) {
+            Err(e) => Err(MissingDeathData {
+                desc: format!(
+                    "Unable to parse death message base from death source: {}",
+                    e
+                ),
+            }),
+            Ok(death_message_base) => match lookup_string(death_message_base, strings) {
+                None => Err(MissingDeathData {
+                    desc: format!(
+                        "Unknown death message base in death source: {}",
+                        death_message_base
+                    ),
+                }),
+                Some(death_message) => {
+                    offset += death_message_base.len() + 3;
+                    match get_string(&packet, offset) {
+                        Err(e) => Err(MissingDeathData {
+                            desc: format!("Unable to parse player name from death source: {}", e),
+                        }),
+                        Ok(player_name) => {
+                            offset += player_name.len() + 8;
+                            match get_string(&packet, offset) {
+                                Err(e) => Err(MissingDeathData {
+                                    desc: format!(
+                                        "Unable to parse second string from death source: {}",
+                                        e
+                                    ),
+                                }),
+                                Ok(second_sym) => {
+                                    if base_lookup == "DeathSource.Player" {
+                                        // second string in death source is player name, not lookup
+                                        // get 3rd string, is a lookup
+                                        offset += second_sym.len() + 2;
+                                        return match get_string(&packet, offset) {
+                                            Err(e) => Err(MissingDeathData {
+                                                desc: format!(
+                                                    "Unable to parse third string from death source: {}",
+                                                    e
+                                                ),
+                                            }),
+                                            Ok(third_sym) => match lookup_string(third_sym, strings) {
+                                                None => Err(MissingDeathData {
+                                                    desc: format!(
+                                                        "Unable to lookup third string {} from death source",
+                                                        third_sym
+                                                    ),
+                                                }),
+                                                Some(third) => Ok(base
+                                                                  .replacen("{0}", death_message, 1)
+                                                                  .replacen("{0}", player_name, 1)
+                                                                  .replacen("{1}", second_sym, 1)
+                                                                  .replacen("{2}", third, 1)),
+                                            },
+                                        };
+                                    }
+                                    match lookup_string(second_sym, strings) {
+                                        None => Err(MissingDeathData {
+                                            desc: format!(
+                                                "Unable to lookup second string {} from death source",
+                                                second_sym
+                                            ),
+                                        }),
+                                        Some(second) => Ok(base
+                                                           .replacen("{0}", death_message, 1)
+                                                           .replacen("{0}", player_name, 1)
+                                                           .replacen("{1}", second, 1)),
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        },
+    }
+}
+
+fn assemble_death_text(
+    packet: &[u8],
+    base_lookup: &str,
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+) -> Result<String, MissingDeathData> {
+    match lookup_string(base_lookup, strings) {
+        None => Err(MissingDeathData {
+            desc: format!("Unknown death text: {}", base_lookup),
+        }),
+        Some(base) => match get_string(&packet, STRING_START + base_lookup.len() + 3) {
+            Err(e) => Err(MissingDeathData {
+                desc: format!("Unable to parse player name from death text: {}", e),
+            }),
+            Ok(player_name) => Ok(base.replacen("{0}", player_name, 1)),
+        },
+    }
 }

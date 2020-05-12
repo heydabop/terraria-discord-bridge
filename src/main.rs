@@ -1,4 +1,5 @@
 mod handler;
+mod strings;
 mod terraria_pcap;
 
 use regex::Regex;
