@@ -31,12 +31,6 @@ pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<d
                     }
                     let length = u16::from_be_bytes([data[1], data[0]]);
                     if length as usize != data.len() {
-                        eprintln!(
-                            "Terraria packet mismatch: {} != {}\n{:?}",
-                            length,
-                            data.len(),
-                            &data,
-                        );
                         continue;
                     }
                     if length < 8 {
