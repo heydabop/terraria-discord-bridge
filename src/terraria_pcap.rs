@@ -1,16 +1,18 @@
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
 use std::error::Error;
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
 
 // read pcap file of server output looking for relevant messages
-pub fn parse_packets(
-    filename: &str,
-    http: Arc<Http>,
-    channel_id: ChannelId,
-) -> Result<(), Box<dyn Error>> {
-    let mut reader = pcap::Reader::from_file(filename)?;
+pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<dyn Error>> {
+    let tcpdump = Command::new("tcpdump")
+        .stdout(Stdio::piped())
+        .args(&["-i", "lo", "tcp", "src", "port", "7777", "-w", "-"])
+        .spawn()?;
+
+    let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))?;
 
     thread::spawn(move || loop {
         match reader.read_packet() {
