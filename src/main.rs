@@ -20,6 +20,7 @@ struct Config {
     server_url: Option<String>,
     bridge_channel_id: u64,
     server_logfile: String,
+    tcpdump_interface: String,
 }
 
 fn main() {
@@ -53,6 +54,7 @@ fn main() {
     terraria_pcap::parse_packets(
         client.cache_and_http.http.clone(),
         ChannelId(cfg.bridge_channel_id),
+        cfg.tcpdump_interface,
     )
     .expect("Unable to start packet parsing thread");
 

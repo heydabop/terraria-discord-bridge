@@ -24,10 +24,23 @@ impl fmt::Display for MissingDeathData {
 impl Error for MissingDeathData {}
 
 // read pcap file of server output looking for relevant messages
-pub fn parse_packets(http: Arc<Http>, channel_id: ChannelId) -> Result<(), Box<dyn Error>> {
+pub fn parse_packets(
+    http: Arc<Http>,
+    channel_id: ChannelId,
+    tcpdump_interface: String,
+) -> Result<(), Box<dyn Error>> {
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
-        .args(&["-i", "lo", "tcp", "src", "port", "7777", "-w", "-"])
+        .args(&[
+            "-i",
+            &tcpdump_interface,
+            "tcp",
+            "src",
+            "port",
+            "7777",
+            "-w",
+            "-",
+        ])
         .spawn()?;
 
     let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))?;
