@@ -7,7 +7,6 @@ use std::fmt;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
-use std::time::Instant;
 
 const STRING_START: usize = 7;
 
@@ -56,7 +55,7 @@ pub fn parse_packets(
     let strings = strings::get();
 
     thread::spawn(move || {
-        let mut last_deaths: HashMap<String, Instant> = HashMap::new();
+        let mut last_deaths: HashMap<String, u32> = HashMap::new();
 
         loop {
             match reader.read_packet() {
@@ -64,7 +63,7 @@ pub fn parse_packets(
                     eprintln!("Unable to read packet: {}", e);
                     return;
                 }
-                Ok(packet) => match reader.data(&packet) {
+                Ok(packet) => match reader.data(&packet.bytes()) {
                     Err(e) => {
                         eprintln!("Unable to parse data from packet: {}", e);
                         continue;
@@ -91,19 +90,16 @@ pub fn parse_packets(
                         match build_death(&data[STRING_START..data.len()], &strings) {
                             Err(e) => eprintln!("Error building death message: {}", e),
                             Ok(death) => {
-                                //TODO get death time from packet time not parse time
-
-                                let now = Instant::now();
                                 match last_deaths.get(&death.victim) {
                                     None => {}
                                     Some(&last_death) => {
-                                        if now.duration_since(last_death).as_secs() < 5 {
+                                        if packet.epoch_seconds() - last_death < 5 {
                                             //repeat packet, ignore
                                             continue;
                                         }
                                     }
                                 }
-                                last_deaths.insert(death.victim, now);
+                                last_deaths.insert(death.victim, packet.epoch_seconds());
 
                                 // TODO: save to DB
 
@@ -216,7 +212,7 @@ fn build_from_death_source(
                     // Every death source packet has the world name as the second param and its used here for {1}, so try to replace it if it's there
                     let death_message_subbed = death_message
                         .replacen("{0}", params[0], 1)
-                        .replacen("{1}", params[1], 0);
+                        .replacen("{1}", params[1], 1);
                     // The base here is pretty simple, either "{0} by {1}" or "{0} by {1}'s {2}" for player kills
                     // {0} here is the death_message_subbed we just made, 1 is the killer, and 2 is the player's weapon if applicable
                     let mut final_message = base
