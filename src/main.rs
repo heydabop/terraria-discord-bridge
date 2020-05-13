@@ -2,6 +2,7 @@ mod handler;
 mod strings;
 mod terraria_pcap;
 
+use postgres::{self, NoTls};
 use regex::Regex;
 use serde::Deserialize;
 use serenity::client::Client;
@@ -21,12 +22,31 @@ struct Config {
     bridge_channel_id: u64,
     server_logfile: String,
     tcpdump_interface: String,
+    postgres: PgConfig,
+}
+
+#[derive(Deserialize)]
+struct PgConfig {
+    host: String,
+    port: u16,
+    user: String,
+    pass: String,
+    dbname: String,
 }
 
 fn main() {
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
+
+    let db_client = postgres::Config::new()
+        .host(&cfg.postgres.host)
+        .port(cfg.postgres.port)
+        .user(&cfg.postgres.user)
+        .dbname(&cfg.postgres.dbname)
+        .password(&cfg.postgres.pass)
+        .connect(NoTls)
+        .expect("Unable to connect to postgres");
 
     let client_handler = handler::Handler {
         playing: cfg.server_url,
@@ -55,6 +75,7 @@ fn main() {
         client.cache_and_http.http.clone(),
         ChannelId(cfg.bridge_channel_id),
         &cfg.tcpdump_interface,
+        db_client,
     )
     .expect("Unable to start packet parsing thread");
 

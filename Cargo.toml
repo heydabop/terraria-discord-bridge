@@ -14,6 +14,7 @@ codegen-units = 1
 [dependencies]
 ctrlc = { version = "3.0", features = ["termination"] }
 pcap = { path = "../pcap" }
+postgres = "0.17.3"
 regex = "1"
 serenity = "0.8"
 serde = { version = "1.0", features = ["derive"] }

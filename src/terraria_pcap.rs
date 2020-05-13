@@ -1,4 +1,6 @@
 use crate::strings;
+use postgres::types::Type;
+use postgres::Client;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
 use std::collections::HashMap;
@@ -35,6 +37,7 @@ pub fn parse_packets(
     http: Arc<Http>,
     channel_id: ChannelId,
     tcpdump_interface: &str,
+    mut db: Client,
 ) -> Result<(), Box<dyn Error>> {
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
@@ -53,6 +56,11 @@ pub fn parse_packets(
     let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))?;
 
     let strings = strings::get();
+
+    let insert_death = db.prepare_typed(
+        "INSERT INTO death(victim, killer, weapon, message) VALUES ($1, $2, $3, $4)",
+        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT],
+    )?;
 
     thread::spawn(move || {
         let mut last_deaths: HashMap<String, u32> = HashMap::new();
@@ -99,9 +107,15 @@ pub fn parse_packets(
                                         }
                                     }
                                 }
-                                last_deaths.insert(death.victim, packet.epoch_seconds());
 
-                                // TODO: save to DB
+                                if let Err(e) = db.execute(
+                                    &insert_death,
+                                    &[&death.victim, &death.killer, &death.weapon, &death.msg],
+                                ) {
+                                    eprintln!("Error inserting death: {}", e);
+                                }
+
+                                last_deaths.insert(death.victim, packet.epoch_seconds());
 
                                 if let Err(e) = channel_id.say(&http, death.msg) {
                                     eprintln!("Unable to send death notice to discord: {}", e);
