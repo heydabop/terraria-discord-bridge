@@ -2,13 +2,19 @@ mod handler;
 mod strings;
 mod terraria_pcap;
 
-use postgres::{self, NoTls};
+use postgres::NoTls;
+use r2d2_postgres::r2d2::Pool;
+use r2d2_postgres::PostgresConnectionManager;
 use regex::Regex;
 use serde::Deserialize;
 use serenity::client::Client;
-use serenity::framework::standard::StandardFramework;
-use serenity::http::Http;
+use serenity::framework::standard::macros::{command, group};
+use serenity::framework::standard::{CommandError, CommandResult, StandardFramework};
+use serenity::http::{CacheHttp, Http};
+use serenity::model::channel::Message;
 use serenity::model::id::ChannelId;
+use serenity::prelude::*;
+use std::collections::HashMap;
 use std::error::Error;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
@@ -40,19 +46,33 @@ struct TcpDumpConfig {
     port: u16,
 }
 
+struct DbClient;
+
+impl TypeMapKey for DbClient {
+    type Value = Pool<PostgresConnectionManager<NoTls>>;
+}
+
+#[group]
+#[commands(deaths)]
+struct Terraria;
+
 fn main() {
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
 
-    let db_client = postgres::Config::new()
+    let mut db_config = postgres::Config::new();
+    db_config
         .host(&cfg.postgres.host)
         .port(cfg.postgres.port)
         .user(&cfg.postgres.user)
         .dbname(&cfg.postgres.dbname)
-        .password(&cfg.postgres.pass)
+        .password(&cfg.postgres.pass);
+    let db_client = db_config
         .connect(NoTls)
         .expect("Unable to connect to postgres");
+    let db_pool_serenity = Pool::new(PostgresConnectionManager::new(db_config, NoTls))
+        .expect("Unable to create postgres connection pool");
 
     let client_handler = handler::Handler {
         playing: cfg.server_url,
@@ -60,7 +80,17 @@ fn main() {
     };
 
     let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
-    client.with_framework(StandardFramework::new().configure(|c| c.prefix("!")));
+    client.with_framework(
+        StandardFramework::new()
+            .configure(|c| c.prefix("!"))
+            .group(&TERRARIA_GROUP),
+    );
+
+    {
+        // Add server stdin named pipe to client's shared data
+        let mut data = client.data.write();
+        data.insert::<DbClient>(db_pool_serenity);
+    }
 
     // Handle SIGINT and SIGTERM and shutdown client before killing
     let shutdown_manager = client.shard_manager.clone();
@@ -88,6 +118,48 @@ fn main() {
 
     if let Err(e) = client.start() {
         eprintln!("An error occurred while running the client: {:?}", e);
+    }
+}
+
+#[command]
+fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
+    let data = ctx.data.read();
+    let pool = data
+        .get::<DbClient>()
+        .expect("Failed to get database pool from context");
+    let mut db = pool.get().expect("Failed to get connection from pool");
+
+    match db.query("SELECT victim FROM death", &[]) {
+        Err(e) => Err(CommandError(format!("Unable to query deaths: {}", e))),
+        Ok(rows) => {
+            let mut death_map: HashMap<String, u32> = HashMap::new();
+            for row in rows {
+                let victim: String = row.get(0);
+                match death_map.get(&victim) {
+                    None => death_map.insert(victim, 1),
+                    Some(&victim_deaths) => death_map.insert(victim, victim_deaths + 1),
+                };
+            }
+            let mut deaths = vec![];
+            for (victim, victim_deaths) in &death_map {
+                deaths.push((victim, victim_deaths));
+            }
+            deaths.sort_by(|a, b| b.1.cmp(a.1));
+
+            let mut content = String::new();
+            for death in deaths {
+                content.push_str(&format!("{} - {}\n", death.0, death.1));
+            }
+
+            if let Err(e) = msg.channel_id.say(ctx.http(), content) {
+                return Err(CommandError(format!(
+                    "Error replying to deaths command: {}",
+                    e
+                )));
+            }
+
+            Ok(())
+        }
     }
 }
 
