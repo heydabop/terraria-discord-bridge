@@ -57,8 +57,8 @@ pub fn parse_packets(
     let strings = strings::get();
 
     let insert_death = db.prepare_typed(
-        "INSERT INTO death(victim, killer, weapon, message) VALUES ($1, $2, $3, $4)",
-        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT],
+        "INSERT INTO death(victim, killer, weapon, message, seconds_since_last) VALUES ($1, $2, $3, $4, $5)",
+        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT, Type::INT4],
     )?;
 
     thread::spawn(move || {
@@ -103,30 +103,45 @@ pub fn parse_packets(
                             Ok(death) => {
                                 let last_death = last_deaths.get(&death.victim);
 
-                                if let Some(&last_death) = last_death {
-                                    if packet.epoch_seconds() - last_death < 5 {
+                                let seconds_since_last = if let Some(&last_death) = last_death {
+                                    let seconds = packet.epoch_seconds() - last_death;
+                                    if seconds < 5 {
                                         //repeat packet, ignore
                                         continue;
                                     }
-                                }
+                                    Some(seconds)
+                                } else {
+                                    None
+                                };
 
                                 if let Err(e) = db.execute(
                                     &insert_death,
-                                    &[&death.victim, &death.killer, &death.weapon, &death.msg],
+                                    &[
+                                        &death.victim,
+                                        &death.killer,
+                                        &death.weapon,
+                                        &death.msg,
+                                        &(if let Some(seconds) = seconds_since_last {
+                                            #[allow(clippy::cast_possible_wrap)]
+                                            Some(seconds as i32) //still allows 68 years as an i32
+                                        } else {
+                                            None
+                                        }),
+                                    ],
                                 ) {
                                     eprintln!("Error inserting death: {}", e);
                                 }
 
-                                let message = match last_death {
+                                last_deaths.insert(death.victim, packet.epoch_seconds());
+
+                                let message = match seconds_since_last {
                                     None => death.msg,
-                                    Some(&last_death) => format!(
+                                    Some(seconds) => format!(
                                         "{}  *({} since last death)*",
                                         death.msg,
-                                        friendly_duration(packet.epoch_seconds() - last_death)
+                                        friendly_duration(seconds)
                                     ),
                                 };
-
-                                last_deaths.insert(death.victim, packet.epoch_seconds());
 
                                 if let Err(e) = channel_id.say(&http, message) {
                                     eprintln!("Unable to send death notice to discord: {}", e);
