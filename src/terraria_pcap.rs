@@ -101,13 +101,12 @@ pub fn parse_packets(
                         match build_death(&data[STRING_START..data.len()], &strings) {
                             Err(e) => eprintln!("Error building death message: {}", e),
                             Ok(death) => {
-                                match last_deaths.get(&death.victim) {
-                                    None => {}
-                                    Some(&last_death) => {
-                                        if packet.epoch_seconds() - last_death < 5 {
-                                            //repeat packet, ignore
-                                            continue;
-                                        }
+                                let last_death = last_deaths.get(&death.victim);
+
+                                if let Some(&last_death) = last_death {
+                                    if packet.epoch_seconds() - last_death < 5 {
+                                        //repeat packet, ignore
+                                        continue;
                                     }
                                 }
 
@@ -118,9 +117,18 @@ pub fn parse_packets(
                                     eprintln!("Error inserting death: {}", e);
                                 }
 
+                                let message = match last_death {
+                                    None => death.msg,
+                                    Some(&last_death) => format!(
+                                        "{}  *({} seconds since last death)*",
+                                        death.msg,
+                                        packet.epoch_seconds() - last_death
+                                    ),
+                                };
+
                                 last_deaths.insert(death.victim, packet.epoch_seconds());
 
-                                if let Err(e) = channel_id.say(&http, death.msg) {
+                                if let Err(e) = channel_id.say(&http, message) {
                                     eprintln!("Unable to send death notice to discord: {}", e);
                                 }
                             }
