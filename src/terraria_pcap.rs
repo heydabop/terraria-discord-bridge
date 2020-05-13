@@ -7,6 +7,7 @@ use std::fmt;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 const STRING_START: usize = 7;
 
@@ -47,69 +48,91 @@ pub fn parse_packets(
 
     let strings = strings::get();
 
-    thread::spawn(move || loop {
-        match reader.read_packet() {
-            Err(e) => {
-                eprintln!("Unable to read packet: {}", e);
-                return;
-            }
-            Ok(packet) => match reader.data(&packet) {
+    thread::spawn(move || {
+        let mut last_deaths: HashMap<String, Instant> = HashMap::new();
+
+        loop {
+            match reader.read_packet() {
                 Err(e) => {
-                    eprintln!("Unable to parse data from packet: {}", e);
-                    continue;
+                    eprintln!("Unable to read packet: {}", e);
+                    return;
                 }
-                Ok(data) => {
-                    if data.len() < 14 {
+                Ok(packet) => match reader.data(&packet) {
+                    Err(e) => {
+                        eprintln!("Unable to parse data from packet: {}", e);
                         continue;
                     }
-                    let length = u16::from_be_bytes([data[1], data[0]]);
-                    if length as usize != data.len() {
-                        continue;
-                    }
-                    if length < 8 {
-                        continue;
-                    }
-                    if data[2..7] != [0x52, 1, 0, 0xff, 2] {
-                        // server message? in deaths and server chats, not sure of meaning
-                        continue;
-                    }
-                    if data[8..13] != [0x44, 0x65, 0x61, 0x74, 0x68] {
-                        // death messages start with "Death"
-                        continue;
-                    }
-                    match get_string(&data, STRING_START) {
-                        Err(e) => {
-                            eprintln!("Unable to parse string: {}", e);
+                    Ok(data) => {
+                        if data.len() < 14 {
                             continue;
                         }
-                        Ok(death_type) => {
-                            // Have first string in message, should be DeathSource.xxx or DeathText.xxx
-                            match if death_type.find("DeathSource.") == Some(0) {
-                                assemble_death_source(&data, &death_type, &strings)
-                            } else if death_type.find("DeathText.") == Some(0) {
-                                assemble_death_text(&data, &death_type, &strings)
-                            } else {
-                                Err(MissingDeathData {
-                                    desc: (format!("Unknown death cause: {}", death_type)),
-                                })
-                            } {
-                                Err(e) => {
-                                    eprintln!("Error assembling death message: {}", e);
-                                    if let Err(e) = channel_id.say(&http, death_type) {
-                                        eprintln!("Unable to send death notice to discord: {}", e);
+                        let length = u16::from_be_bytes([data[1], data[0]]);
+                        if length as usize != data.len() {
+                            continue;
+                        }
+                        if length < 8 {
+                            continue;
+                        }
+                        if data[2..7] != [0x52, 1, 0, 0xff, 2] {
+                            // server message? in deaths and server chats, not sure of meaning
+                            continue;
+                        }
+                        if data[8..13] != [0x44, 0x65, 0x61, 0x74, 0x68] {
+                            // death messages start with "Death"
+                            continue;
+                        }
+                        match get_string(&data, STRING_START) {
+                            Err(e) => {
+                                eprintln!("Unable to parse string: {}", e);
+                                continue;
+                            }
+                            Ok(death_type) => {
+                                // Have first string in message, should be DeathSource.xxx or DeathText.xxx
+                                match if death_type.find("DeathSource.") == Some(0) {
+                                    assemble_death_source(
+                                        &data,
+                                        &death_type,
+                                        &strings,
+                                        &mut last_deaths,
+                                    )
+                                } else if death_type.find("DeathText.") == Some(0) {
+                                    assemble_death_text(
+                                        &data,
+                                        &death_type,
+                                        &strings,
+                                        &mut last_deaths,
+                                    )
+                                } else {
+                                    Err(MissingDeathData {
+                                        desc: (format!("Unknown death cause: {}", death_type)),
+                                    })
+                                } {
+                                    Err(e) => {
+                                        eprintln!("Error assembling death message: {}", e);
+                                        if let Err(e) = channel_id.say(&http, death_type) {
+                                            eprintln!(
+                                                "Unable to send death notice to discord: {}",
+                                                e
+                                            );
+                                        }
                                     }
-                                }
-                                Ok(msg) => {
-                                    if let Err(e) = channel_id.say(&http, msg) {
-                                        eprintln!("Unable to send death notice to discord: {}", e);
+                                    Ok(msg) => {
+                                        if !msg.is_empty() {
+                                            if let Err(e) = channel_id.say(&http, msg) {
+                                                eprintln!(
+                                                    "Unable to send death notice to discord: {}",
+                                                    e
+                                                );
+                                            }
+                                        }
                                     }
                                 }
                             }
-                        }
-                    };
-                }
-            },
-        };
+                        };
+                    }
+                },
+            };
+        }
     });
 
     Ok(())
@@ -148,6 +171,7 @@ fn assemble_death_source(
     packet: &[u8],
     base_lookup: &str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+    last_deaths: &mut HashMap<String, Instant>,
 ) -> Result<String, MissingDeathData> {
     let mut offset = STRING_START + base_lookup.len() + 3;
     match lookup_string(base_lookup, strings) {
@@ -202,11 +226,25 @@ fn assemble_death_source(
                                                         third_sym
                                                     ),
                                                 }),
-                                                Some(third) => Ok(base
-                                                                  .replacen("{0}", death_message, 1)
-                                                                  .replacen("{0}", player_name, 1)
-                                                                  .replacen("{1}", second_sym, 1)
-                                                                  .replacen("{2}", third, 1)),
+                                                Some(third) => {
+                                                    let now = Instant::now();
+                                                    match last_deaths.get(player_name) {
+                                                        None => {}
+                                                        Some(&last_death) => {
+                                                            if now.duration_since(last_death).as_secs() < 5 {
+                                                                //repeat packet, ignore
+                                                                return Ok(String::from(""));
+                                                            }
+                                                        }
+                                                    }
+                                                    last_deaths.insert(String::from(player_name), now);
+
+                                                    Ok(base
+                                                       .replacen("{0}", death_message, 1)
+                                                       .replacen("{0}", player_name, 1)
+                                                       .replacen("{1}", second_sym, 1)
+                                                       .replacen("{2}", third, 1))
+                                                }
                                             },
                                         };
                                     }
@@ -217,10 +255,24 @@ fn assemble_death_source(
                                                 second_sym
                                             ),
                                         }),
-                                        Some(second) => Ok(base
-                                                           .replacen("{0}", death_message, 1)
-                                                           .replacen("{0}", player_name, 1)
-                                                           .replacen("{1}", second, 1)),
+                                        Some(second) => {
+                                            let now = Instant::now();
+                                            match last_deaths.get(player_name) {
+                                                None => {}
+                                                Some(&last_death) => {
+                                                    if now.duration_since(last_death).as_secs() < 5 {
+                                                        //repeat packet, ignore
+                                                        return Ok(String::from(""));
+                                                    }
+                                                }
+                                            }
+                                            last_deaths.insert(String::from(player_name), now);
+
+                                            Ok(base
+                                               .replacen("{0}", death_message, 1)
+                                               .replacen("{0}", player_name, 1)
+                                               .replacen("{1}", second, 1))
+                                        }
                                     }
                                 }
                             }
@@ -236,6 +288,7 @@ fn assemble_death_text(
     packet: &[u8],
     base_lookup: &str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+    last_deaths: &mut HashMap<String, Instant>,
 ) -> Result<String, MissingDeathData> {
     match lookup_string(base_lookup, strings) {
         None => Err(MissingDeathData {
@@ -245,7 +298,20 @@ fn assemble_death_text(
             Err(e) => Err(MissingDeathData {
                 desc: format!("Unable to parse player name from death text: {}", e),
             }),
-            Ok(player_name) => Ok(base.replacen("{0}", player_name, 1)),
+            Ok(player_name) => {
+                let now = Instant::now();
+                match last_deaths.get(player_name) {
+                    None => {}
+                    Some(&last_death) => {
+                        if now.duration_since(last_death).as_secs() < 5 {
+                            //repeat packet, ignore
+                            return Ok(String::from(""));
+                        }
+                    }
+                }
+                last_deaths.insert(String::from(player_name), now);
+                Ok(base.replacen("{0}", player_name, 1))
+            }
         },
     }
 }
