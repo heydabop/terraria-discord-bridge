@@ -21,8 +21,8 @@ struct Config {
     server_url: Option<String>,
     bridge_channel_id: u64,
     server_logfile: String,
-    tcpdump_interface: String,
     postgres: PgConfig,
+    tcpdump: TcpDumpConfig,
 }
 
 #[derive(Deserialize)]
@@ -32,6 +32,12 @@ struct PgConfig {
     user: String,
     pass: String,
     dbname: String,
+}
+
+#[derive(Deserialize)]
+struct TcpDumpConfig {
+    interface: String,
+    port: u16,
 }
 
 fn main() {
@@ -74,7 +80,8 @@ fn main() {
     terraria_pcap::parse_packets(
         client.cache_and_http.http.clone(),
         ChannelId(cfg.bridge_channel_id),
-        &cfg.tcpdump_interface,
+        &cfg.tcpdump.interface,
+        cfg.tcpdump.port,
         db_client,
     )
     .expect("Unable to start packet parsing thread");

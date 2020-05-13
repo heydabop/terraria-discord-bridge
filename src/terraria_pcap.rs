@@ -36,18 +36,19 @@ struct Death {
 pub fn parse_packets(
     http: Arc<Http>,
     channel_id: ChannelId,
-    tcpdump_interface: &str,
+    interface: &str,
+    port: u16,
     mut db: Client,
 ) -> Result<(), Box<dyn Error>> {
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
         .args(&[
             "-i",
-            tcpdump_interface,
+            interface,
             "tcp",
             "src",
             "port",
-            "7777",
+            &port.to_string(),
             "-w",
             "-",
         ])
