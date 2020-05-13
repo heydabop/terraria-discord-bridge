@@ -24,6 +24,13 @@ impl fmt::Display for MissingDeathData {
 
 impl Error for MissingDeathData {}
 
+struct Death {
+    msg: String,
+    victim: String,
+    killer: Option<String>,
+    weapon: Option<String>,
+}
+
 // read pcap file of server output looking for relevant messages
 pub fn parse_packets(
     http: Arc<Http>,
@@ -81,57 +88,33 @@ pub fn parse_packets(
                             // death messages start with "Death"
                             continue;
                         }
-                        match get_string(&data, STRING_START) {
-                            Err(e) => {
-                                eprintln!("Unable to parse string: {}", e);
-                                continue;
-                            }
-                            Ok(death_type) => {
-                                // Have first string in message, should be DeathSource.xxx or DeathText.xxx
-                                match if death_type.find("DeathSource.") == Some(0) {
-                                    assemble_death_source(
-                                        &data,
-                                        &death_type,
-                                        &strings,
-                                        &mut last_deaths,
-                                    )
-                                } else if death_type.find("DeathText.") == Some(0) {
-                                    assemble_death_text(
-                                        &data,
-                                        &death_type,
-                                        &strings,
-                                        &mut last_deaths,
-                                    )
-                                } else {
-                                    Err(MissingDeathData {
-                                        desc: (format!("Unknown death cause: {}", death_type)),
-                                    })
-                                } {
-                                    Err(e) => {
-                                        eprintln!("Error assembling death message: {}", e);
-                                        if let Err(e) = channel_id.say(&http, death_type) {
-                                            eprintln!(
-                                                "Unable to send death notice to discord: {}",
-                                                e
-                                            );
-                                        }
-                                    }
-                                    Ok(msg) => {
-                                        if !msg.is_empty() {
-                                            if let Err(e) = channel_id.say(&http, msg) {
-                                                eprintln!(
-                                                    "Unable to send death notice to discord: {}",
-                                                    e
-                                                );
-                                            }
+                        match build_death(&data[STRING_START..data.len()], &strings) {
+                            Err(e) => eprintln!("Error building death message: {}", e),
+                            Ok(death) => {
+                                //TODO get death time from packet time not parse time
+
+                                let now = Instant::now();
+                                match last_deaths.get(&death.victim) {
+                                    None => {}
+                                    Some(&last_death) => {
+                                        if now.duration_since(last_death).as_secs() < 5 {
+                                            //repeat packet, ignore
+                                            continue;
                                         }
                                     }
                                 }
+                                last_deaths.insert(death.victim, now);
+
+                                // TODO: save to DB
+
+                                if let Err(e) = channel_id.say(&http, death.msg) {
+                                    eprintln!("Unable to send death notice to discord: {}", e);
+                                }
                             }
-                        };
+                        }
                     }
                 },
-            };
+            }
         }
     });
 
@@ -150,168 +133,150 @@ fn get_string(packet: &[u8], start: usize) -> Result<&str, std::str::Utf8Error> 
 fn lookup_string<'a>(
     s: &'a str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-) -> Option<&'static str> {
+) -> &'a str {
     match s.find('.') {
-        None => None,
+        None => {
+            eprintln!("Missing . in lookup: {}", s);
+            s
+        }
         Some(i) => {
             let s1 = &s[0..i];
             let s2 = &s[i + 1..s.len()];
             match strings.get(s1) {
-                None => None,
+                None => {
+                    eprintln!("Unable to lookup first half of {}", s);
+                    s
+                }
                 Some(strings) => match strings.get(s2) {
-                    None => None,
-                    Some(s_final) => Some(s_final),
+                    None => {
+                        eprintln!("Unable to lookup second half of {}", s);
+                        s
+                    }
+                    Some(s_final) => s_final,
                 },
             }
         }
     }
 }
 
-fn assemble_death_source(
-    packet: &[u8],
-    base_lookup: &str,
+fn build_death(
+    data: &[u8],
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-    last_deaths: &mut HashMap<String, Instant>,
-) -> Result<String, MissingDeathData> {
-    let mut offset = STRING_START + base_lookup.len() + 3;
-    match lookup_string(base_lookup, strings) {
-        None => Err(MissingDeathData {
-            desc: format!("Unknown death source: {}", base_lookup),
+) -> Result<Death, MissingDeathData> {
+    match get_string(&data, 0) {
+        Err(e) => Err(MissingDeathData {
+            desc: format!("Unable to parse first death string: {}", e),
         }),
-        Some(base) => match get_string(&packet, offset) {
-            Err(e) => Err(MissingDeathData {
-                desc: format!(
-                    "Unable to parse death message base from death source: {}",
-                    e
-                ),
-            }),
-            Ok(death_message_base) => match lookup_string(death_message_base, strings) {
-                None => Err(MissingDeathData {
-                    desc: format!(
-                        "Unknown death message base in death source: {}",
-                        death_message_base
-                    ),
-                }),
-                Some(death_message) => {
-                    offset += death_message_base.len() + 3;
-                    match get_string(&packet, offset) {
-                        Err(e) => Err(MissingDeathData {
-                            desc: format!("Unable to parse player name from death source: {}", e),
-                        }),
-                        Ok(player_name) => {
-                            offset += player_name.len() + 8;
-                            match get_string(&packet, offset) {
-                                Err(e) => Err(MissingDeathData {
-                                    desc: format!(
-                                        "Unable to parse second string from death source: {}",
-                                        e
-                                    ),
-                                }),
-                                Ok(second_sym) => {
-                                    if base_lookup == "DeathSource.Player" {
-                                        // second string in death source is player name, not lookup
-                                        // get 3rd string, is a lookup
-                                        offset += second_sym.len() + 2;
-                                        return match get_string(&packet, offset) {
-                                            Err(e) => Err(MissingDeathData {
-                                                desc: format!(
-                                                    "Unable to parse third string from death source: {}",
-                                                    e
-                                                ),
-                                            }),
-                                            Ok(third_sym) => match lookup_string(third_sym, strings) {
-                                                None => Err(MissingDeathData {
-                                                    desc: format!(
-                                                        "Unable to lookup third string {} from death source",
-                                                        third_sym
-                                                    ),
-                                                }),
-                                                Some(third) => {
-                                                    let now = Instant::now();
-                                                    match last_deaths.get(player_name) {
-                                                        None => {}
-                                                        Some(&last_death) => {
-                                                            if now.duration_since(last_death).as_secs() < 5 {
-                                                                //repeat packet, ignore
-                                                                return Ok(String::from(""));
-                                                            }
-                                                        }
-                                                    }
-                                                    last_deaths.insert(String::from(player_name), now);
-
-                                                    Ok(base
-                                                       .replacen("{0}", death_message, 1)
-                                                       .replacen("{0}", player_name, 1)
-                                                       .replacen("{1}", second_sym, 1)
-                                                       .replacen("{2}", third, 1))
-                                                }
-                                            },
-                                        };
-                                    }
-                                    match lookup_string(second_sym, strings) {
-                                        None => Err(MissingDeathData {
-                                            desc: format!(
-                                                "Unable to lookup second string {} from death source",
-                                                second_sym
-                                            ),
-                                        }),
-                                        Some(second) => {
-                                            let now = Instant::now();
-                                            match last_deaths.get(player_name) {
-                                                None => {}
-                                                Some(&last_death) => {
-                                                    if now.duration_since(last_death).as_secs() < 5 {
-                                                        //repeat packet, ignore
-                                                        return Ok(String::from(""));
-                                                    }
-                                                }
-                                            }
-                                            last_deaths.insert(String::from(player_name), now);
-
-                                            Ok(base
-                                               .replacen("{0}", death_message, 1)
-                                               .replacen("{0}", player_name, 1)
-                                               .replacen("{1}", second, 1))
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-        },
+        Ok(death_type) => {
+            let data = &data[death_type.len() + 3..data.len()];
+            // Have first string in message, should be DeathSource.xxx or DeathText.xxx
+            if death_type.find("DeathSource.") == Some(0) {
+                build_from_death_source(&data, &death_type, &strings)
+            } else if death_type.find("DeathText.") == Some(0) {
+                build_from_death_text(&data, &death_type, &strings)
+            } else {
+                Err(MissingDeathData {
+                    desc: (format!("Unknown death cause: {}", death_type)),
+                })
+            }
+        }
     }
 }
 
-fn assemble_death_text(
-    packet: &[u8],
+fn build_from_death_source(
+    data: &[u8],
     base_lookup: &str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-    last_deaths: &mut HashMap<String, Instant>,
-) -> Result<String, MissingDeathData> {
-    match lookup_string(base_lookup, strings) {
-        None => Err(MissingDeathData {
-            desc: format!("Unknown death text: {}", base_lookup),
+) -> Result<Death, MissingDeathData> {
+    let base = lookup_string(base_lookup, strings);
+    match get_string(&data, 0) {
+        Err(e) => Err(MissingDeathData {
+            desc: format!(
+                "Unable to parse death message base from death source: {}",
+                e
+            ),
         }),
-        Some(base) => match get_string(&packet, STRING_START + base_lookup.len() + 3) {
-            Err(e) => Err(MissingDeathData {
-                desc: format!("Unable to parse player name from death text: {}", e),
-            }),
-            Ok(player_name) => {
-                let now = Instant::now();
-                match last_deaths.get(player_name) {
-                    None => {}
-                    Some(&last_death) => {
-                        if now.duration_since(last_death).as_secs() < 5 {
-                            //repeat packet, ignore
-                            return Ok(String::from(""));
-                        }
+        Ok(death_message_base) => {
+            let death_message = lookup_string(death_message_base, strings);
+            // have deathsource and deathtext, moving on to params for string substitution
+            let data = &data[death_message_base.len() + 2..data.len()];
+            let num_params = if base_lookup == "DeathSource.Player" {
+                4
+            } else {
+                3
+            };
+
+            match get_params(data, &strings, num_params) {
+                Err(e) => Err(MissingDeathData {
+                    desc: format!("Error getting death source params: {}", e),
+                }),
+                Ok(params) => {
+                    // Most death texts consist of something like "{0} was..."
+                    // However at least one has multiple params like "{0} was removed from {1}"
+                    // Every death source packet has the world name as the second param and its used here for {1}, so try to replace it if it's there
+                    let death_message_subbed = death_message
+                        .replacen("{0}", params[0], 1)
+                        .replacen("{1}", params[1], 0);
+                    // The base here is pretty simple, either "{0} by {1}" or "{0} by {1}'s {2}" for player kills
+                    // {0} here is the death_message_subbed we just made, 1 is the killer, and 2 is the player's weapon if applicable
+                    let mut final_message = base
+                        .replacen("{0}", &death_message_subbed, 1)
+                        .replacen("{1}", params[2], 1);
+                    if num_params == 4 {
+                        final_message = final_message.replacen("{2}", params[3], 1);
                     }
+                    Ok(Death {
+                        msg: final_message,
+                        victim: params[0].to_string(),
+                        killer: Some(params[2].to_string()),
+                        weapon: if num_params == 4 {
+                            Some(params[3].to_string())
+                        } else {
+                            None
+                        },
+                    })
                 }
-                last_deaths.insert(String::from(player_name), now);
-                Ok(base.replacen("{0}", player_name, 1))
             }
-        },
+        }
+    }
+}
+
+fn get_params<'a>(
+    data: &'a [u8],
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+    n: u8,
+) -> Result<Vec<&'a str>, std::str::Utf8Error> {
+    let mut offset = 0;
+    let mut params = vec![];
+    for _ in 0..n {
+        let s = get_string(&data, offset + 1)?;
+        if data[offset] == 0 {
+            // no lookup
+            params.push(s);
+        } else {
+            params.push(lookup_string(s, strings));
+        }
+        offset += s.len() + 2;
+    }
+
+    Ok(params)
+}
+
+fn build_from_death_text(
+    data: &[u8],
+    base_lookup: &str,
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+) -> Result<Death, MissingDeathData> {
+    let base = lookup_string(base_lookup, strings);
+    match get_string(&data, 0) {
+        Err(e) => Err(MissingDeathData {
+            desc: format!("Unable to parse player name after death text: {}", e),
+        }),
+        Ok(player_name) => Ok(Death {
+            msg: base.replacen("{0}", player_name, 1),
+            victim: player_name.to_string(),
+            killer: None,
+            weapon: None,
+        }),
     }
 }
