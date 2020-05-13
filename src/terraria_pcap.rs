@@ -120,9 +120,9 @@ pub fn parse_packets(
                                 let message = match last_death {
                                     None => death.msg,
                                     Some(&last_death) => format!(
-                                        "{}  *({} seconds since last death)*",
+                                        "{}  *({} since last death)*",
                                         death.msg,
-                                        packet.epoch_seconds() - last_death
+                                        friendly_duration(packet.epoch_seconds() - last_death)
                                     ),
                                 };
 
@@ -140,6 +140,16 @@ pub fn parse_packets(
     });
 
     Ok(())
+}
+
+fn friendly_duration(secs: u32) -> String {
+    if secs < 120 {
+        format!("{} seconds", secs)
+    } else if secs < 7200 {
+        format!("{:.0} minutes", (f64::from(secs) / 60.0).round())
+    } else {
+        format!("{:.1} hours", f64::from(secs) / 3600.0)
+    }
 }
 
 // Find string starting at start, strings appear to be length followed by the string
@@ -236,13 +246,13 @@ fn build_from_death_source(
                     // However at least one has multiple params like "{0} was removed from {1}"
                     // Every death source packet has the world name as the second param and its used here for {1}, so try to replace it if it's there
                     let death_message_subbed = death_message
-                        .replacen("{0}", params[0], 1)
+                        .replacen("{0}", &format!("**{}**", params[0]), 1)
                         .replacen("{1}", params[1], 1);
                     // The base here is pretty simple, either "{0} by {1}" or "{0} by {1}'s {2}" for player kills
                     // {0} here is the death_message_subbed we just made, 1 is the killer, and 2 is the player's weapon if applicable
                     let mut final_message = base
                         .replacen("{0}", &death_message_subbed, 1)
-                        .replacen("{1}", params[2], 1);
+                        .replacen("{1}", &format!("**{}**", params[2]), 1);
                     if num_params == 4 {
                         final_message = final_message.replacen("{2}", params[3], 1);
                     }
@@ -294,7 +304,7 @@ fn build_from_death_text(
             desc: format!("Unable to parse player name after death text: {}", e),
         }),
         Ok(player_name) => Ok(Death {
-            msg: base.replacen("{0}", player_name, 1),
+            msg: base.replacen("{0}", &format!("**{}**", player_name), 1),
             victim: player_name.to_string(),
             killer: None,
             weapon: None,
