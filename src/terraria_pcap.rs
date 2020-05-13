@@ -54,8 +54,6 @@ pub fn parse_packets(
         ])
         .spawn()?;
 
-    let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))?;
-
     let strings = strings::get();
 
     let insert_death = db.prepare_typed(
@@ -64,6 +62,10 @@ pub fn parse_packets(
     )?;
 
     thread::spawn(move || {
+        let mut reader =
+            pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
+                .expect("Unable to start pcap reader");
+
         let mut last_deaths: HashMap<String, u32> = HashMap::new();
 
         loop {
