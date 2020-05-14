@@ -77,12 +77,13 @@ fn main() {
     let client_handler = handler::Handler {
         playing: cfg.server_url,
         bridge_channel_id: cfg.bridge_channel_id,
+        ignore_regex: Regex::new("^!").unwrap(),
     };
 
     let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
     client.with_framework(
         StandardFramework::new()
-            .configure(|c| c.prefix("!"))
+            .configure(|c| c.prefix("!").allow_dm(false).case_insensitivity(true))
             .group(&TERRARIA_GROUP),
     );
 
