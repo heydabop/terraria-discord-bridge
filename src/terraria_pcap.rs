@@ -69,6 +69,8 @@ pub fn parse_packets(
 
         let mut last_deaths: HashMap<String, u32> = HashMap::new();
 
+        let mut last_sends: HashMap<String, u32> = HashMap::new();
+
         loop {
             match reader.read_packet() {
                 Err(e) => {
@@ -110,8 +112,15 @@ pub fn parse_packets(
                                 try_generic(data, &strings)
                             };
                         if let Some(message) = message {
-                            if let Err(e) = channel_id.say(&http, message) {
-                                eprintln!("Unable to announce to discord: {}", e);
+                            let repeat = match last_sends.get(&message) {
+                                None => false,
+                                Some(last_send) => packet.epoch_seconds() - last_send < 3,
+                            };
+                            last_sends.insert(message.clone(), packet.epoch_seconds());
+                            if !repeat {
+                                if let Err(e) = channel_id.say(&http, message) {
+                                    eprintln!("Unable to announce to discord: {}", e);
+                                }
                             }
                         }
 
