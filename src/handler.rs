@@ -45,7 +45,12 @@ impl EventHandler for Handler {
             }
         }
 
-        let mut content = msg.content.trim().replace('\n', " ").replace('\r', "");
+        let mut content = msg
+            .content
+            .trim()
+            .replace(|c: char| !c.is_ascii(), "")
+            .replace('\n', " ")
+            .replace(|c: char| c.is_ascii_control(), "");
         content.truncate(100);
 
         if !content.is_empty() {
