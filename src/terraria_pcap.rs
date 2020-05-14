@@ -1,6 +1,6 @@
 use crate::strings;
 use postgres::types::Type;
-use postgres::Client;
+use postgres::{Client, Statement};
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
 use std::collections::HashMap;
@@ -95,61 +95,23 @@ pub fn parse_packets(
                             // server message? in deaths and server chats, not sure of meaning
                             continue;
                         }
-                        if data[8..13] != [0x44, 0x65, 0x61, 0x74, 0x68] {
+                        if data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
                             // death messages start with "Death"
-                            continue;
-                        }
-                        match build_death(&data[STRING_START..data.len()], &strings) {
-                            Err(e) => eprintln!("Error building death message: {}", e),
-                            Ok(death) => {
-                                let last_death = last_deaths.get(&death.victim);
-
-                                let seconds_since_last = if let Some(&last_death) = last_death {
-                                    let seconds = packet.epoch_seconds() - last_death;
-                                    if seconds < 5 {
-                                        //repeat packet, ignore
-                                        continue;
-                                    }
-                                    Some(seconds)
-                                } else {
-                                    None
-                                };
-
-                                if let Err(e) = db.execute(
-                                    &insert_death,
-                                    &[
-                                        &death.victim,
-                                        &death.killer,
-                                        &death.weapon,
-                                        &death.msg,
-                                        &(if let Some(seconds) = seconds_since_last {
-                                            #[allow(clippy::cast_possible_wrap)]
-                                            Some(seconds as i32) //still allows 68 years as an i32
-                                        } else {
-                                            None
-                                        }),
-                                        &death.is_pk,
-                                    ],
-                                ) {
-                                    eprintln!("Error inserting death: {}", e);
-                                }
-
-                                last_deaths.insert(death.victim, packet.epoch_seconds());
-
-                                let message = match seconds_since_last {
-                                    None => death.msg,
-                                    Some(seconds) => format!(
-                                        "{}  *({} since last death)*",
-                                        death.msg,
-                                        friendly_duration(seconds)
-                                    ),
-                                };
-
+                            // also appear to have 0x0f, 0x13, or 0x12 in data[7]. TODO need value for projectile deathsource
+                            if let Some(message) = try_death(
+                                data,
+                                packet.epoch_seconds(),
+                                &strings,
+                                &mut last_deaths,
+                                &mut db,
+                                &insert_death,
+                            ) {
                                 if let Err(e) = channel_id.say(&http, message) {
                                     eprintln!("Unable to send death notice to discord: {}", e);
                                 }
                             }
                         }
+                        continue;
                     }
                 },
             }
@@ -157,6 +119,70 @@ pub fn parse_packets(
     });
 
     Ok(())
+}
+
+fn try_death(
+    data: &[u8],
+    epoch_seconds: u32,
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+    last_deaths: &mut HashMap<String, u32>,
+    db: &mut Client,
+    insert_death: &Statement,
+) -> Option<String> {
+    match build_death(&data[STRING_START..data.len()], &strings) {
+        Err(e) => {
+            eprintln!("Error building death message: {}", e);
+            None
+        }
+        Ok(death) => {
+            let last_death = last_deaths.get(&death.victim);
+
+            let seconds_since_last = if let Some(&last_death) = last_death {
+                let seconds = epoch_seconds - last_death;
+                if seconds < 5 {
+                    //repeat packet, ignore
+                    return None;
+                }
+                Some(seconds)
+            } else {
+                None
+            };
+
+            println!("{} {}", data[7], &death.msg);
+
+            if let Err(e) = db.execute(
+                insert_death,
+                &[
+                    &death.victim,
+                    &death.killer,
+                    &death.weapon,
+                    &death.msg,
+                    &(if let Some(seconds) = seconds_since_last {
+                        #[allow(clippy::cast_possible_wrap)]
+                        Some(seconds as i32) //still allows 68 years as an i32
+                    } else {
+                        None
+                    }),
+                    &death.is_pk,
+                ],
+            ) {
+                eprintln!("Error inserting death: {}", e);
+            }
+
+            last_deaths.insert(death.victim, epoch_seconds);
+
+            let message = match seconds_since_last {
+                None => death.msg,
+                Some(seconds) => format!(
+                    "{}  *({} since last death)*",
+                    death.msg,
+                    friendly_duration(seconds)
+                ),
+            };
+
+            Some(message)
+        }
+    }
 }
 
 fn friendly_duration(secs: u32) -> String {
