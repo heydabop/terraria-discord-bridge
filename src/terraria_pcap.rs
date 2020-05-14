@@ -171,6 +171,7 @@ fn friendly_duration(secs: u32) -> String {
 
 // Find string starting at start, strings appear to be length followed by the string
 // ex [5Death], [8Terraria]
+// may also be followed by number of args in string (if string isnt an arg itself)
 fn get_string(packet: &[u8], start: usize) -> Result<&str, std::str::Utf8Error> {
     let length = packet[start] as usize;
     std::str::from_utf8(&packet[start + 1..=start + length])
