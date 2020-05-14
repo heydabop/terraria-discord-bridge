@@ -14,15 +14,12 @@ impl TypeMapKey for OwnUserId {
 pub struct Handler {
     pub playing: Option<String>,
     pub bridge_channel_id: u64,
-    pub ignore_regex: Regex,
 }
 
 impl EventHandler for Handler {
     fn message(&self, ctx: Context, msg: Message) {
         // Ignore any messages not in the bridge channel
-        if msg.channel_id.as_u64() != &self.bridge_channel_id
-            || self.ignore_regex.is_match(&msg.content)
-        {
+        if msg.channel_id.as_u64() != &self.bridge_channel_id || msg.content.find('!') == Some(0) {
             return;
         }
 
