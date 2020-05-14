@@ -53,7 +53,7 @@ impl TypeMapKey for DbClient {
 }
 
 #[group]
-#[commands(deaths)]
+#[commands(deaths, playing)]
 struct Terraria;
 
 fn main() {
@@ -163,6 +163,18 @@ fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
     }
 }
 
+#[command]
+fn playing(_ctx: &mut Context, _msg: &Message) -> CommandResult {
+    if let Err(e) = Command::new("tmux")
+        .args(&["send-keys", "-t", "terraria", "playing\r\n"])
+        .output()
+    {
+        return Err(CommandError(format!("Error writing to tmux pane: {}", e)));
+    }
+
+    Ok(())
+}
+
 // "tail"s server logfile, sending new lines to discord
 fn send_loglines(
     filename: &str,
@@ -178,6 +190,8 @@ fn send_loglines(
     let chat_regex = Regex::new("^(?:: )*<(?P<user>.+?)> (?P<message>.+)$").unwrap();
     let join_leave_regex =
         Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
+    let playing_regex =
+        Regex::new("^(?P<user>.+?) \\((?:\\d{1,3}\\.){3}\\d{1,3}:\\d+\\)$").unwrap();
 
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
@@ -204,6 +218,10 @@ fn send_loglines(
                     channel_id.say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
                 {
                     eprintln!("Unable to send chat to discord: {}", e);
+                }
+            } else if let Some(caps) = playing_regex.captures(line) {
+                if let Err(e) = channel_id.say(&http, &caps["user"]) {
+                    eprintln!("Unable to send playing to discord: {}", e);
                 }
             }
         }
