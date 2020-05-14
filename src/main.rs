@@ -175,8 +175,9 @@ fn send_loglines(
         .spawn()?;
 
     // Look for chat messages, joins, and leaves
-    let send_regex = Regex::new("(^<.+>.+$|^.+ has joined\\.$|^.+ has left\\.$)").unwrap();
-    let server_regex = Regex::new("^<Server>.+$").unwrap();
+    let chat_regex = Regex::new("(?:: )*<(?P<user>.+)> (?P<message>.+)$").unwrap();
+    let join_leave_regex =
+        Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
 
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
@@ -190,9 +191,19 @@ fn send_loglines(
             let line = line.trim();
 
             // If line has content and matches one of the lines we want to send to discord
-            if !line.is_empty() && send_regex.is_match(line) && !server_regex.is_match(line) {
-                if let Err(e) = channel_id.say(&http, line) {
-                    eprintln!("Unable to send logline to discord: {}", e);
+            if let Some(caps) = chat_regex.captures(line) {
+                if &caps["user"] != "Server" {
+                    if let Err(e) =
+                        channel_id.say(&http, format!("<{}> {}", &caps["user"], &caps["message"]))
+                    {
+                        eprintln!("Unable to send chat to discord: {}", e);
+                    }
+                }
+            } else if let Some(caps) = join_leave_regex.captures(line) {
+                if let Err(e) =
+                    channel_id.say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
+                {
+                    eprintln!("Unable to send chat to discord: {}", e);
                 }
             }
         }
