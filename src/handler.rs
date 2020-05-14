@@ -45,18 +45,23 @@ impl EventHandler for Handler {
             }
         }
 
-        let content = msg.content.trim();
+        let mut content = msg.content.trim().replace('\n', " ").replace('\r', "");
+        content.truncate(100);
 
         if !content.is_empty() {
             if let Some(own_id) = own_id {
                 // If we know who we are and we didn't send this message
                 if msg.author.id != own_id {
+                    let author_name = match msg.author_nick(ctx.http) {
+                        Some(nick) => nick,
+                        None => msg.author.name,
+                    };
                     if let Err(e) = Command::new("tmux")
                         .args(&[
                             "send-keys",
                             "-t",
                             "terraria",
-                            &format!("say {}\r\n", content),
+                            &format!("say {}: {}\r\n", author_name, content),
                         ])
                         .output()
                     {
