@@ -1,4 +1,3 @@
-use regex::Regex;
 use serenity::model::channel::Message;
 use serenity::model::gateway::{Activity, Ready};
 use serenity::model::id::UserId;

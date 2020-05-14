@@ -95,22 +95,26 @@ pub fn parse_packets(
                             // server message? in deaths and server chats, not sure of meaning
                             continue;
                         }
-                        if data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
-                            // death messages start with "Death"
-                            // also appear to have 0x0f, 0x13, or 0x12 in data[7]. TODO need value for projectile deathsource
-                            if let Some(message) = try_death(
-                                data,
-                                packet.epoch_seconds(),
-                                &strings,
-                                &mut last_deaths,
-                                &mut db,
-                                &insert_death,
-                            ) {
-                                if let Err(e) = channel_id.say(&http, message) {
-                                    eprintln!("Unable to send death notice to discord: {}", e);
-                                }
+                        let message =
+                            if length >= 12 && data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
+                                // death messages start with "Death"
+                                try_death(
+                                    data,
+                                    packet.epoch_seconds(),
+                                    &strings,
+                                    &mut last_deaths,
+                                    &mut db,
+                                    &insert_death,
+                                )
+                            } else {
+                                try_generic(data, &strings)
+                            };
+                        if let Some(message) = message {
+                            if let Err(e) = channel_id.say(&http, message) {
+                                eprintln!("Unable to announce to discord: {}", e);
                             }
                         }
+
                         continue;
                     }
                 },
@@ -147,8 +151,6 @@ fn try_death(
             } else {
                 None
             };
-
-            println!("{} {}", data[7], &death.msg);
 
             if let Err(e) = db.execute(
                 insert_death,
@@ -208,11 +210,11 @@ fn get_string(packet: &[u8], start: usize) -> Result<&str, std::str::Utf8Error> 
 fn lookup_string<'a>(
     s: &'a str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-) -> &'a str {
+) -> Option<&'a str> {
     match s.find('.') {
         None => {
             eprintln!("Missing . in lookup: {}", s);
-            s
+            None
         }
         Some(i) => {
             let s1 = &s[0..i];
@@ -220,14 +222,14 @@ fn lookup_string<'a>(
             match strings.get(s1) {
                 None => {
                     eprintln!("Unable to lookup first half of {}", s);
-                    s
+                    None
                 }
                 Some(strings) => match strings.get(s2) {
                     None => {
                         eprintln!("Unable to lookup second half of {}", s);
-                        s
+                        None
                     }
-                    Some(s_final) => s_final,
+                    Some(s_final) => Some(s_final),
                 },
             }
         }
@@ -263,7 +265,7 @@ fn build_from_death_source(
     base_lookup: &str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
 ) -> Result<Death, MissingDeathData> {
-    let base = lookup_string(base_lookup, strings);
+    let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
     match get_string(&data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!(
@@ -272,7 +274,8 @@ fn build_from_death_source(
             ),
         }),
         Ok(death_message_base) => {
-            let death_message = lookup_string(death_message_base, strings);
+            let death_message =
+                lookup_string(death_message_base, strings).unwrap_or(death_message_base);
             // have deathsource and deathtext, moving on to params for string substitution
             let data = &data[death_message_base.len() + 2..data.len()];
             let is_pk = base_lookup == "DeathSource.Player";
@@ -327,7 +330,7 @@ fn get_params<'a>(
             // no lookup
             params.push(s);
         } else {
-            params.push(lookup_string(s, strings));
+            params.push(lookup_string(s, strings).unwrap_or(s));
         }
         offset += s.len() + 2;
     }
@@ -340,7 +343,7 @@ fn build_from_death_text(
     base_lookup: &str,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
 ) -> Result<Death, MissingDeathData> {
-    let base = lookup_string(base_lookup, strings);
+    let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
     match get_string(&data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!("Unable to parse player name after death text: {}", e),
@@ -352,5 +355,54 @@ fn build_from_death_text(
             weapon: None,
             is_pk: false,
         }),
+    }
+}
+
+fn try_generic(
+    data: &[u8],
+    strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
+) -> Option<String> {
+    let mut offset = STRING_START;
+    match get_string(&data, offset) {
+        Err(e) => {
+            eprintln!("Error parsing first generic string: {}\n{:?}", e, data);
+            None
+        }
+        Ok(base_lookup) => {
+            offset += base_lookup.len() + 1;
+            if base_lookup.find("CLI.") == Some(0)
+                || base_lookup == "Game.JoinGreeting"
+                || base_lookup.find("LegacyMultiplayer.") == Some(0)
+            {
+                // Only LegacyMultipler messages were interested in are 19 and 20 (has joined) and (has left)
+                return None;
+            }
+            println!("generic: {:?}", data);
+            match lookup_string(base_lookup, strings) {
+                None => {
+                    eprintln!("Unable to find generic string: {}", base_lookup);
+                    None
+                }
+                Some(base) => {
+                    let mut base = base.to_string();
+
+                    let num_params = data[offset];
+                    offset += 1;
+                    match get_params(&data[offset..data.len()], strings, num_params) {
+                        Err(e) => {
+                            eprintln!("Error getting generic params for string: {}\n{:?}", e, data);
+                            None
+                        }
+                        Ok(params) => {
+                            for (i, p) in params.iter().enumerate() {
+                                println!("replace: {{{}}} {}", i, p);
+                                base = base.replacen(&format!("{{{}}}", i), p, 1);
+                            }
+                            Some(base)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
