@@ -175,7 +175,7 @@ fn send_loglines(
         .spawn()?;
 
     // Look for chat messages, joins, and leaves
-    let chat_regex = Regex::new("(?:: )*<(?P<user>.+)> (?P<message>.+)$").unwrap();
+    let chat_regex = Regex::new("^(?:: )*<(?P<user>.+?)> (?P<message>.+)$").unwrap();
     let join_leave_regex =
         Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
 
