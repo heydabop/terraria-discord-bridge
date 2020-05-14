@@ -30,6 +30,7 @@ struct Death {
     victim: String,
     killer: Option<String>,
     weapon: Option<String>,
+    is_pk: bool,
 }
 
 // read pcap file of server output looking for relevant messages
@@ -57,8 +58,8 @@ pub fn parse_packets(
     let strings = strings::get();
 
     let insert_death = db.prepare_typed(
-        "INSERT INTO death(victim, killer, weapon, message, seconds_since_last) VALUES ($1, $2, $3, $4, $5)",
-        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT, Type::INT4],
+        "INSERT INTO death(victim, killer, weapon, message, seconds_since_last, is_pk) VALUES ($1, $2, $3, $4, $5, $6)",
+        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT, Type::INT4, Type::BOOL],
     )?;
 
     thread::spawn(move || {
@@ -127,6 +128,7 @@ pub fn parse_packets(
                                         } else {
                                             None
                                         }),
+                                        &death.is_pk,
                                     ],
                                 ) {
                                     eprintln!("Error inserting death: {}", e);
@@ -246,11 +248,8 @@ fn build_from_death_source(
             let death_message = lookup_string(death_message_base, strings);
             // have deathsource and deathtext, moving on to params for string substitution
             let data = &data[death_message_base.len() + 2..data.len()];
-            let num_params = if base_lookup == "DeathSource.Player" {
-                4
-            } else {
-                3
-            };
+            let is_pk = base_lookup == "DeathSource.Player";
+            let num_params = if is_pk { 4 } else { 3 };
 
             match get_params(data, &strings, num_params) {
                 Err(e) => Err(MissingDeathData {
@@ -280,6 +279,7 @@ fn build_from_death_source(
                         } else {
                             None
                         },
+                        is_pk,
                     })
                 }
             }
@@ -323,6 +323,7 @@ fn build_from_death_text(
             victim: player_name.to_string(),
             killer: None,
             weapon: None,
+            is_pk: false,
         }),
     }
 }
