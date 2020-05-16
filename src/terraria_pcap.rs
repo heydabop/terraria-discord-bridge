@@ -109,7 +109,10 @@ pub fn parse_packets(
                                     &insert_death,
                                 )
                             } else {
-                                try_generic(data, &strings)
+                                match try_generic(&data[6..], &strings) {
+                                    None => None,
+                                    Some(s) => Some(s.0),
+                                }
                             };
                         if let Some(message) = message {
                             let repeat = match last_sends.get(&message) {
@@ -142,7 +145,7 @@ fn try_death(
     db: &mut Client,
     insert_death: &Statement,
 ) -> Option<String> {
-    match build_death(&data[STRING_START..data.len()], &strings) {
+    match build_death(&data[STRING_START..], &strings) {
         Err(e) => {
             eprintln!("Error building death message: {}", e);
             None
@@ -227,7 +230,7 @@ fn lookup_string<'a>(
         }
         Some(i) => {
             let s1 = &s[0..i];
-            let s2 = &s[i + 1..s.len()];
+            let s2 = &s[i + 1..];
             match strings.get(s1) {
                 None => {
                     eprintln!("Unable to lookup first half of {}", s);
@@ -254,7 +257,7 @@ fn build_death(
             desc: format!("Unable to parse first death string: {}", e),
         }),
         Ok(death_type) => {
-            let data = &data[death_type.len() + 3..data.len()];
+            let data = &data[death_type.len() + 3..];
             // Have first string in message, should be DeathSource.xxx or DeathText.xxx
             if death_type.find("DeathSource.") == Some(0) {
                 build_from_death_source(&data, &death_type, &strings)
@@ -286,7 +289,7 @@ fn build_from_death_source(
             let death_message =
                 lookup_string(death_message_base, strings).unwrap_or(death_message_base);
             // have deathsource and deathtext, moving on to params for string substitution
-            let data = &data[death_message_base.len() + 2..data.len()];
+            let data = &data[death_message_base.len() + 2..];
             let is_pk = base_lookup == "DeathSource.Player";
             let num_params = if is_pk { 4 } else { 3 };
 
@@ -367,51 +370,122 @@ fn build_from_death_text(
     }
 }
 
+// strings are [mode][length][string...][num_substitutions (only if mode != 0)]
+// ex. [0x2, 0x17, Announcement.HasArrived, 0x1]
+// ex. [0x0, 0x8, username]
+// mode is 0 for literal and 2 for localization key
+// a string with a non-0 mode will be follwed by a single byte indicating how many substitutions are needed
+// a string with mode 0 has no trailing byte (the next byte after a mode 0 string is the next string's mode (if there's another)
+// we can recursively assemble a string by assembling all of its substitutions (and the substitutions' substitutions, etc) and then subbing them in
+// TODO: this should probably also be used for death message deserialization but i still have some special functionality to work around there
 fn try_generic(
     data: &[u8],
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-) -> Option<String> {
-    let mut offset = STRING_START;
-    match get_string(&data, offset) {
+) -> Option<(String, usize)> {
+    let mut offset = 0;
+    let mode = data[offset];
+    offset += 1;
+    match get_string(data, offset) {
         Err(e) => {
             eprintln!("Error parsing first generic string: {}\n{:?}", e, data);
             None
         }
-        Ok(base_lookup) => {
-            offset += base_lookup.len() + 1;
-            if base_lookup.find("CLI.") == Some(0)
-                || base_lookup == "Game.JoinGreeting"
-                || base_lookup.find("LegacyMultiplayer.") == Some(0)
+        Ok(key) => {
+            offset += key.len() + 1;
+            if mode == 0 {
+                return Some((key.to_string(), offset));
+            }
+
+            if key.find("CLI.") == Some(0)
+                || key == "Game.JoinGreeting"
+                || key.find("LegacyMultiplayer.") == Some(0)
             {
-                // Only LegacyMultipler messages were interested in are 19 and 20 (has joined) and (has left)
                 return None;
             }
-            println!("generic: {:?}", data);
-            match lookup_string(base_lookup, strings) {
-                None => {
-                    eprintln!("Unable to find generic string: {}", base_lookup);
-                    None
-                }
-                Some(base) => {
-                    let mut base = base.to_string();
 
-                    let num_params = data[offset];
-                    offset += 1;
-                    match get_params(&data[offset..data.len()], strings, num_params) {
-                        Err(e) => {
-                            eprintln!("Error getting generic params for string: {}\n{:?}", e, data);
-                            None
-                        }
-                        Ok(params) => {
-                            for (i, p) in params.iter().enumerate() {
-                                println!("replace: {{{}}} {}", i, p);
-                                base = base.replacen(&format!("{{{}}}", i), p, 1);
-                            }
-                            Some(base)
-                        }
-                    }
-                }
+            println!("generic: {:?}", data);
+            let num_subs = data[offset] as usize;
+            offset += 1;
+            let mut subs = Vec::with_capacity(num_subs);
+            for _ in 0..num_subs {
+                let sub = match try_generic(&data[offset..], strings) {
+                    None => return None,
+                    Some(sub) => sub,
+                };
+                subs.push(sub.0);
+                offset += sub.1;
             }
+            let mut val = match lookup_string(key, strings) {
+                None => return None,
+                Some(val) => val.to_string(),
+            };
+            for (i, p) in subs.iter().enumerate() {
+                println!("replace: {{{}}} {}", i, p);
+                val = val.replacen(&format!("{{{}}}", i), p, 1);
+            }
+            Some((val, offset))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn try_generic() {
+        use super::strings;
+
+        let strings = strings::get();
+
+        let flesh = vec![
+            0x02, 0x16, 0x41, 0x6e, 0x6e, 0x6f, 0x75, 0x6e, 0x63, 0x65, 0x6d, 0x65, 0x6e, 0x74,
+            0x2e, 0x48, 0x61, 0x73, 0x41, 0x77, 0x6f, 0x6b, 0x65, 0x6e, 0x01, 0x02, 0x13, 0x4e,
+            0x50, 0x43, 0x4e, 0x61, 0x6d, 0x65, 0x2e, 0x57, 0x61, 0x6c, 0x6c, 0x6f, 0x66, 0x46,
+            0x6c, 0x65, 0x73, 0x68, 0x00, 0xaf, 0x4b, 0xff,
+        ];
+        assert_eq!(
+            Some(("Wall of Flesh has awoken!".to_string(), 47)),
+            super::try_generic(&flesh, &strings)
+        );
+
+        let eclipse = vec![
+            0x02, 0x0d, 0x4c, 0x65, 0x67, 0x61, 0x63, 0x79, 0x4d, 0x69, 0x73, 0x63, 0x2e, 0x32,
+            0x30, 0x00, 0x32, 0xff, 0x82,
+        ];
+        assert_eq!(
+            Some(("A solar eclipse is happening!".to_string(), 16)),
+            super::try_generic(&eclipse, &strings)
+        );
+
+        let merchant = vec![
+            2, 23, 65, 110, 110, 111, 117, 110, 99, 101, 109, 101, 110, 116, 46, 72, 97, 115, 65,
+            114, 114, 105, 118, 101, 100, 1, 2, 13, 71, 97, 109, 101, 46, 78, 80, 67, 84, 105, 116,
+            108, 101, 2, 0, 5, 87, 105, 108, 108, 121, 2, 26, 78, 80, 67, 78, 97, 109, 101, 46, 84,
+            114, 97, 118, 101, 108, 108, 105, 110, 103, 77, 101, 114, 99, 104, 97, 110, 116, 0, 50,
+            125, 255,
+        ];
+        assert_eq!(
+            Some(("Willy the Traveling Merchant has arrived!".to_string(), 78)),
+            super::try_generic(&merchant, &strings)
+        );
+
+        let kill = vec![
+            0x02, 0x12, 0x44, 0x65, 0x61, 0x74, 0x68, 0x53, 0x6f, 0x75, 0x72, 0x63, 0x65, 0x2e,
+            0x50, 0x6c, 0x61, 0x79, 0x65, 0x72, 0x03, 0x02, 0x22, 0x44, 0x65, 0x61, 0x74, 0x68,
+            0x54, 0x65, 0x78, 0x74, 0x47, 0x65, 0x6e, 0x65, 0x72, 0x69, 0x63, 0x2e, 0x45, 0x6e,
+            0x74, 0x72, 0x61, 0x69, 0x6c, 0x73, 0x52, 0x69, 0x70, 0x70, 0x65, 0x64, 0x4f, 0x75,
+            0x74, 0x02, 0x00, 0x05, 0x62, 0x6f, 0x74, 0x74, 0x79, 0x00, 0x04, 0x74, 0x65, 0x73,
+            0x74, 0x00, 0x10, 0x73, 0x70, 0x61, 0x63, 0x65, 0x20, 0x69, 0x6e, 0x20, 0x6d, 0x79,
+            0x20, 0x6e, 0x61, 0x6d, 0x65, 0x02, 0x19, 0x49, 0x74, 0x65, 0x6d, 0x4e, 0x61, 0x6d,
+            0x65, 0x2e, 0x43, 0x6f, 0x70, 0x70, 0x65, 0x72, 0x53, 0x68, 0x6f, 0x72, 0x74, 0x73,
+            0x77, 0x6f, 0x72, 0x64, 0x00, 0xe1, 0x19, 0x19,
+        ];
+        assert_eq!(
+            Some((
+                "botty's entrails were ripped out by space in my name's Copper Shortsword."
+                    .to_string(),
+                117
+            )),
+            super::try_generic(&kill, &strings)
+        );
     }
 }
