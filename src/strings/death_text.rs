@@ -31,9 +31,10 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Lava_3", "{0} tried to swim in lava."),
         ("Lava_4", "{0} likes to play in magma."),
         ("Petrified_1", "{0} shattered into pieces."),
-        ("Petrified_2", "{0} cant be put back together again."),
+        ("Petrified_2", "{0} can't be put back together again."),
         ("Petrified_3", "{0} needs to be swept up."),
         ("Petrified_4", "{0} just became another dirt pile."),
+        ("Inferno", "{0} was consumed by the inferno."),
     ]
     .iter()
     .cloned()

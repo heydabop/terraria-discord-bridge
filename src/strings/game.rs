@@ -30,6 +30,8 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("BedObstructed", "Your bed is obstructed."),
         ("PvPFlag", "(PvP)"),
         ("DroppedCoins", "dropped {0}"),
+        ("RespawnInPrefix", ""),
+        ("RespawnInSuffix", "{0}"),
         ("InvasionPoints", "{0} points"),
         ("WaveMessage", "Wave {0}: {1}"),
         ("WaveCleared", "Cleared {0}"),
@@ -37,6 +39,7 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("HasTeleportedTo", "{0} has teleported to {1}"),
         ("Time", "Time: {0}"),
         ("NPCTitle", "{0} the {1}"),
+        ("ReservedForNPC", "Reserved for {0}"),
         ("PlayerDeathTime", "{0} died {1} ago"),
         ("SpawnPointRemoved", "Spawn point removed!"),
         ("SpawnPointSet", "Spawn point set!"),
@@ -72,6 +75,14 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         (
             "BirthdayParty_3",
             "Looks like {0}, {1}, and {2} are throwing a party",
+        ),
+        (
+            "BallBounceResultGolf_Single",
+            "{0} sunk the {1} in {2} stroke!",
+        ),
+        (
+            "BallBounceResultGolf_Plural",
+            "{0} sunk the {1} in {2} strokes!",
         ),
     ]
     .iter()
