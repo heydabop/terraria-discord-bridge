@@ -66,7 +66,7 @@ impl EventHandler for Handler {
                             "send-keys",
                             "-t",
                             "terraria",
-                            &format!("say {}: {}\r\n", author_name, content),
+                            &format!("say {}: {}\n", author_name, content),
                         ])
                         .output()
                     {

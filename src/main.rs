@@ -2,6 +2,7 @@ mod handler;
 mod strings;
 mod terraria_pcap;
 
+use postgres::types::Type;
 use postgres::NoTls;
 use r2d2_postgres::r2d2::Pool;
 use r2d2_postgres::PostgresConnectionManager;
@@ -68,7 +69,10 @@ fn main() {
         .user(&cfg.postgres.user)
         .dbname(&cfg.postgres.dbname)
         .password(&cfg.postgres.pass);
-    let db_client = db_config
+    let db_client_pcap = db_config
+        .connect(NoTls)
+        .expect("Unable to connect to postgres");
+    let db_client_logger = db_config
         .connect(NoTls)
         .expect("Unable to connect to postgres");
     let db_pool_serenity = Pool::new(PostgresConnectionManager::new(db_config, NoTls))
@@ -104,6 +108,7 @@ fn main() {
         &cfg.server_logfile,
         client.cache_and_http.http.clone(),
         ChannelId(cfg.bridge_channel_id),
+        db_client_logger,
     )
     .expect("Unable to start log file thread");
 
@@ -112,7 +117,7 @@ fn main() {
         ChannelId(cfg.bridge_channel_id),
         &cfg.tcpdump.interface,
         cfg.tcpdump.port,
-        db_client,
+        db_client_pcap,
     )
     .expect("Unable to start packet parsing thread");
 
@@ -180,18 +185,32 @@ fn send_loglines(
     filename: &str,
     http: Arc<Http>,
     channel_id: ChannelId,
+    mut db: postgres::Client,
 ) -> Result<(), Box<dyn Error>> {
     let tail = Command::new("tail")
         .stdout(Stdio::piped())
         .args(&["-n", "0", "-F", filename])
         .spawn()?;
 
+    let insert_join = db.prepare_typed(
+        "INSERT INTO server_join(username) VALUES ($1)",
+        &[Type::VARCHAR],
+    )?;
+    let insert_leave = db.prepare_typed(
+        "INSERT INTO server_leave(username) VALUES ($1)",
+        &[Type::VARCHAR],
+    )?;
+    let insert_message = db.prepare_typed(
+        "INSERT INTO  message(author, content) VALUES ($1, $2)",
+        &[Type::VARCHAR, Type::VARCHAR],
+    )?;
+
     // Look for chat messages, joins, and leaves
     let chat_regex = Regex::new("^(?:: )*<(?P<user>.+?)> (?P<message>.+)$").unwrap();
     let join_leave_regex =
         Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
     let playing_regex =
-        Regex::new("^(?P<user>.+?) \\((?:\\d{1,3}\\.){3}\\d{1,3}:\\d+\\)$").unwrap();
+        Regex::new("^(?:: )*(?P<user>.+?) \\((?:\\d{1,3}\\.){3}\\d{1,3}:\\d+\\)$").unwrap();
 
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
@@ -206,18 +225,33 @@ fn send_loglines(
 
             // If line has content and matches one of the lines we want to send to discord
             if let Some(caps) = chat_regex.captures(line) {
-                if &caps["user"] != "Server" {
+                let user = &caps["user"];
+                if user != "Server" {
+                    let message = &caps["message"];
                     if let Err(e) =
                         channel_id.say(&http, format!("<{}> {}", &caps["user"], &caps["message"]))
                     {
                         eprintln!("Unable to send chat to discord: {}", e);
                     }
+                    if let Err(e) = db.execute(&insert_message, &[&user, &message]) {
+                        eprintln!("Unable to insert terraria message into db: {}", e);
+                    }
                 }
             } else if let Some(caps) = join_leave_regex.captures(line) {
+                let user = &caps["user"];
+                let status = &caps["status"];
                 if let Err(e) =
                     channel_id.say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
                 {
                     eprintln!("Unable to send chat to discord: {}", e);
+                }
+                let statement = match status {
+                    "joined" => &insert_join,
+                    "left" => &insert_leave,
+                    _ => continue,
+                };
+                if let Err(e) = db.execute(statement, &[&user]) {
+                    eprintln!("Error inserting terraria user status: {}", e);
                 }
             } else if let Some(caps) = playing_regex.captures(line) {
                 if let Err(e) = channel_id.say(&http, &caps["user"]) {
