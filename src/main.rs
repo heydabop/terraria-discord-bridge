@@ -211,6 +211,7 @@ fn send_loglines(
         Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
     let playing_regex =
         Regex::new("^(?:: )*(?P<user>.+?) \\((?:\\d{1,3}\\.){3}\\d{1,3}:\\d+\\)$").unwrap();
+    let connected_regex = Regex::new("^(?:: )*(\\w+ players? connected\\.)$").unwrap();
 
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
@@ -256,6 +257,10 @@ fn send_loglines(
             } else if let Some(caps) = playing_regex.captures(line) {
                 if let Err(e) = channel_id.say(&http, &caps["user"]) {
                     eprintln!("Unable to send playing to discord: {}", e);
+                }
+            } else if let Some(caps) = connected_regex.captures(line) {
+                if let Err(e) = channel_id.say(&http, &caps[1]) {
+                    eprintln!("Unable to send playing count to discord: {}", e);
                 }
             }
         }
