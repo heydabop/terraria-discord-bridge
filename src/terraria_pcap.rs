@@ -77,7 +77,7 @@ pub fn parse_packets(
                     eprintln!("Unable to read packet: {}", e);
                     return;
                 }
-                Ok(packet) => match reader.data(&packet.bytes()) {
+                Ok(packet) => match reader.data(packet.bytes()) {
                     Err(e) => {
                         eprintln!("Unable to parse data from packet: {}", e);
                         continue;
@@ -145,7 +145,7 @@ fn try_death(
     db: &mut Client,
     insert_death: &Statement,
 ) -> Option<String> {
-    match build_death(&data[STRING_START..], &strings) {
+    match build_death(&data[STRING_START..], strings) {
         Err(e) => {
             eprintln!("Error building death message: {}", e);
             None
@@ -171,12 +171,7 @@ fn try_death(
                     &death.killer,
                     &death.weapon,
                     &death.msg,
-                    &(if let Some(seconds) = seconds_since_last {
-                        #[allow(clippy::cast_possible_wrap)]
-                        Some(seconds as i32) //still allows 68 years as an i32
-                    } else {
-                        None
-                    }),
+                    &seconds_since_last.map(|seconds| seconds as i32),
                     &death.is_pk,
                 ],
             ) {
@@ -252,7 +247,7 @@ fn build_death(
     data: &[u8],
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
 ) -> Result<Death, MissingDeathData> {
-    match get_string(&data, 0) {
+    match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!("Unable to parse first death string: {}", e),
         }),
@@ -260,9 +255,9 @@ fn build_death(
             let data = &data[death_type.len() + 3..];
             // Have first string in message, should be DeathSource.xxx or DeathText.xxx
             if death_type.find("DeathSource.") == Some(0) {
-                build_from_death_source(&data, &death_type, &strings)
+                build_from_death_source(data, death_type, strings)
             } else if death_type.find("DeathText.") == Some(0) {
-                build_from_death_text(&data, &death_type, &strings)
+                build_from_death_text(data, death_type, strings)
             } else {
                 Err(MissingDeathData {
                     desc: (format!("Unknown death cause: {}", death_type)),
@@ -278,7 +273,7 @@ fn build_from_death_source(
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
 ) -> Result<Death, MissingDeathData> {
     let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
-    match get_string(&data, 0) {
+    match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!(
                 "Unable to parse death message base from death source: {}",
@@ -293,7 +288,7 @@ fn build_from_death_source(
             let is_pk = base_lookup == "DeathSource.Player";
             let num_params = if is_pk { 4 } else { 3 };
 
-            match get_params(data, &strings, num_params) {
+            match get_params(data, strings, num_params) {
                 Err(e) => Err(MissingDeathData {
                     desc: format!("Error getting death source params: {}", e),
                 }),
@@ -337,7 +332,7 @@ fn get_params<'a>(
     let mut offset = 0;
     let mut params = vec![];
     for _ in 0..n {
-        let s = get_string(&data, offset + 1)?;
+        let s = get_string(data, offset + 1)?;
         if data[offset] == 0 {
             // no lookup
             params.push(s);
@@ -356,7 +351,7 @@ fn build_from_death_text(
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
 ) -> Result<Death, MissingDeathData> {
     let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
-    match get_string(&data, 0) {
+    match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!("Unable to parse player name after death text: {}", e),
         }),

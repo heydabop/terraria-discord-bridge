@@ -25,11 +25,7 @@ impl EventHandler for Handler {
         // Try to get our ID from shared data
         let mut own_id = {
             let data = ctx.data.read();
-            if let Some(id) = data.get::<OwnUserId>() {
-                Some(*id)
-            } else {
-                None
-            }
+            data.get::<OwnUserId>().copied()
         };
 
         if own_id.is_none() {

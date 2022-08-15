@@ -17,6 +17,7 @@ use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use std::collections::HashMap;
 use std::error::Error;
+use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -153,7 +154,7 @@ fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
 
             let mut content = String::new();
             for death in deaths {
-                content.push_str(&format!("{} - {}\n", death.0, death.1));
+                writeln!(content, "{} - {}", death.0, death.1)?;
             }
 
             if let Err(e) = msg.channel_id.say(ctx.http(), content) {
