@@ -1,14 +1,12 @@
 use crate::strings;
-use postgres::types::Type;
-use postgres::{Client, Statement};
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
 
 const STRING_START: usize = 7;
 
@@ -34,18 +32,18 @@ struct Death {
 }
 
 // read pcap file of server output looking for relevant messages
-pub fn parse_packets(
+pub async fn parse_packets(
     http: Arc<Http>,
     channel_id: ChannelId,
-    interface: &str,
+    interface: String,
     port: u16,
-    mut db: Client,
-) -> Result<(), Box<dyn Error>> {
+    db: Pool<Postgres>,
+) {
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
         .args(&[
             "-i",
-            interface,
+            &interface,
             "tcp",
             "src",
             "port",
@@ -53,97 +51,87 @@ pub fn parse_packets(
             "-w",
             "-",
         ])
-        .spawn()?;
+        .spawn()
+        .expect("error spawning tcpdump process");
 
     let strings = strings::get();
 
-    let insert_death = db.prepare_typed(
-        "INSERT INTO death(victim, killer, weapon, message, seconds_since_last, is_pk) VALUES ($1, $2, $3, $4, $5, $6)",
-        &[Type::VARCHAR, Type::VARCHAR, Type::VARCHAR, Type::TEXT, Type::INT4, Type::BOOL],
-    )?;
+    let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
+        .expect("Unable to start pcap reader");
 
-    thread::spawn(move || {
-        let mut reader =
-            pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
-                .expect("Unable to start pcap reader");
+    let mut last_deaths: HashMap<String, u32> = HashMap::new();
 
-        let mut last_deaths: HashMap<String, u32> = HashMap::new();
+    let mut last_sends: HashMap<String, u32> = HashMap::new();
 
-        let mut last_sends: HashMap<String, u32> = HashMap::new();
-
-        loop {
-            match reader.read_packet() {
-                Err(e) => {
-                    eprintln!("Unable to read packet: {}", e);
-                    return;
+    println!("starting packet reader loop");
+    loop {
+        let packet = match reader.read_packet() {
+            Ok(p) => p,
+            Err(e) => {
+                eprintln!("Unable to read packet: {}", e);
+                return;
+            }
+        };
+        let data = match reader.data(packet.bytes()) {
+            Ok(d) => d,
+            Err(e) => {
+                eprintln!("Unable to parse data from packet: {}", e);
+                continue;
+            }
+        };
+        if data.len() < 14 {
+            continue;
+        }
+        let length = u16::from_be_bytes([data[1], data[0]]);
+        if length as usize != data.len() {
+            continue;
+        }
+        if length < 8 {
+            continue;
+        }
+        if data[2..7] != [0x52, 1, 0, 0xff, 2] {
+            // server message? in deaths and server chats, not sure of meaning
+            continue;
+        }
+        let message = if length >= 12 && data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
+            // death messages start with "Death"
+            try_death(
+                data,
+                packet.epoch_seconds(),
+                &strings,
+                &mut last_deaths,
+                &db,
+            )
+            .await
+        } else {
+            match try_generic(&data[6..], &strings) {
+                None => None,
+                Some(s) => Some(s.0),
+            }
+        };
+        if let Some(message) = message {
+            let repeat = match last_sends.get(&message) {
+                None => false,
+                Some(last_send) => packet.epoch_seconds() - last_send < 3,
+            };
+            last_sends.insert(message.clone(), packet.epoch_seconds());
+            if !repeat {
+                if let Err(e) = channel_id.say(&http, message).await {
+                    eprintln!("Unable to announce to discord: {}", e);
                 }
-                Ok(packet) => match reader.data(packet.bytes()) {
-                    Err(e) => {
-                        eprintln!("Unable to parse data from packet: {}", e);
-                        continue;
-                    }
-                    Ok(data) => {
-                        if data.len() < 14 {
-                            continue;
-                        }
-                        let length = u16::from_be_bytes([data[1], data[0]]);
-                        if length as usize != data.len() {
-                            continue;
-                        }
-                        if length < 8 {
-                            continue;
-                        }
-                        if data[2..7] != [0x52, 1, 0, 0xff, 2] {
-                            // server message? in deaths and server chats, not sure of meaning
-                            continue;
-                        }
-                        let message =
-                            if length >= 12 && data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
-                                // death messages start with "Death"
-                                try_death(
-                                    data,
-                                    packet.epoch_seconds(),
-                                    &strings,
-                                    &mut last_deaths,
-                                    &mut db,
-                                    &insert_death,
-                                )
-                            } else {
-                                match try_generic(&data[6..], &strings) {
-                                    None => None,
-                                    Some(s) => Some(s.0),
-                                }
-                            };
-                        if let Some(message) = message {
-                            let repeat = match last_sends.get(&message) {
-                                None => false,
-                                Some(last_send) => packet.epoch_seconds() - last_send < 3,
-                            };
-                            last_sends.insert(message.clone(), packet.epoch_seconds());
-                            if !repeat {
-                                if let Err(e) = channel_id.say(&http, message) {
-                                    eprintln!("Unable to announce to discord: {}", e);
-                                }
-                            }
-                        }
-
-                        continue;
-                    }
-                },
             }
         }
-    });
 
-    Ok(())
+        continue;
+    }
 }
 
-fn try_death(
+async fn try_death(
     data: &[u8],
     epoch_seconds: u32,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
     last_deaths: &mut HashMap<String, u32>,
-    db: &mut Client,
-    insert_death: &Statement,
+    db: &Pool<Postgres>,
 ) -> Option<String> {
     match build_death(&data[STRING_START..], strings) {
         Err(e) => {
@@ -164,17 +152,8 @@ fn try_death(
                 None
             };
 
-            if let Err(e) = db.execute(
-                insert_death,
-                &[
-                    &death.victim,
-                    &death.killer,
-                    &death.weapon,
-                    &death.msg,
-                    &seconds_since_last.map(|seconds| seconds as i32),
-                    &death.is_pk,
-                ],
-            ) {
+            if let Err(e) = sqlx::query!(r#"INSERT INTO death(victim, killer, weapon, message, seconds_since_last, is_pk) VALUES ($1, $2, $3, $4, $5, $6)"#,
+                                         death.victim, death.killer, death.weapon, death.msg, seconds_since_last.map(|seconds| seconds as i32), death.is_pk).execute(db).await {
                 eprintln!("Error inserting death: {}", e);
             }
 

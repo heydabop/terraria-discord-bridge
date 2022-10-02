@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 12.2 (Debian 12.2-4)
--- Dumped by pg_dump version 12.2 (Debian 12.2-4)
+-- Dumped from database version 12.4 (Debian 12.4-3)
+-- Dumped by pg_dump version 12.4 (Debian 12.4-3)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -204,6 +204,62 @@ ALTER TABLE ONLY public.server_join
 
 ALTER TABLE ONLY public.server_leave
     ADD CONSTRAINT server_leave_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: TABLE death; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.death TO terraria;
+
+
+--
+-- Name: SEQUENCE death_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT USAGE ON SEQUENCE public.death_id_seq TO terraria;
+
+
+--
+-- Name: TABLE message; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.message TO terraria;
+
+
+--
+-- Name: SEQUENCE message_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT USAGE ON SEQUENCE public.message_id_seq TO terraria;
+
+
+--
+-- Name: TABLE server_join; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.server_join TO terraria;
+
+
+--
+-- Name: SEQUENCE server_join_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT USAGE ON SEQUENCE public.server_join_id_seq TO terraria;
+
+
+--
+-- Name: TABLE server_leave; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT SELECT,INSERT ON TABLE public.server_leave TO terraria;
+
+
+--
+-- Name: SEQUENCE server_leave_id_seq; Type: ACL; Schema: public; Owner: -
+--
+
+GRANT USAGE ON SEQUENCE public.server_leave_id_seq TO terraria;
 
 
 --

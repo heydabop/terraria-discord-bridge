@@ -78,12 +78,14 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ),
         (
             "BallBounceResultGolf_Single",
-            "{0} sunk the {1} in {2} stroke!",
+            "{0} sunk the {1} in a hole in one!",
         ),
         (
             "BallBounceResultGolf_Plural",
             "{0} sunk the {1} in {2} strokes!",
         ),
+        ("DarknessDanger", "It is very dark...you feel in danger..."),
+        ("DarknessSafe", "The danger of the dark has passed."),
     ]
     .iter()
     .cloned()

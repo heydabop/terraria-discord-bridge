@@ -1,0 +1,75 @@
+{
+  "db": "PostgreSQL",
+  "02b28aa3c7e9a67f50823bec143252495a47dbf01aa93a6df40d34794a7a2c86": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Varchar",
+          "Varchar",
+          "Varchar",
+          "Text",
+          "Int4",
+          "Bool"
+        ]
+      }
+    },
+    "query": "INSERT INTO death(victim, killer, weapon, message, seconds_since_last, is_pk) VALUES ($1, $2, $3, $4, $5, $6)"
+  },
+  "0a0e7c04670a2ff3ebfd6ee0a53d020960acc48c6d0abed23e278a3eea7ca90a": {
+    "describe": {
+      "columns": [
+        {
+          "name": "victim",
+          "ordinal": 0,
+          "type_info": "Varchar"
+        }
+      ],
+      "nullable": [
+        false
+      ],
+      "parameters": {
+        "Left": []
+      }
+    },
+    "query": "SELECT victim FROM death"
+  },
+  "32c7e7726bb46a2f45d3011b351392017d4814ac656ef2e2722010b0a92cf120": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Varchar",
+          "Varchar"
+        ]
+      }
+    },
+    "query": "INSERT INTO message(author, content) VALUES ($1, $2)"
+  },
+  "6e18f362e7bc2d6c7ebeacd9b5c791bed8b7d08dddbe9b05ee2d4f2c4cb01496": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Varchar"
+        ]
+      }
+    },
+    "query": "INSERT INTO server_join(username) VALUES ($1)"
+  },
+  "cdd111bae19b2a5078d0808f9cf09988a9d9220b410743e16a8c8be3180dd7ae": {
+    "describe": {
+      "columns": [],
+      "nullable": [],
+      "parameters": {
+        "Left": [
+          "Varchar"
+        ]
+      }
+    },
+    "query": "INSERT INTO server_leave(username) VALUES ($1)"
+  }
+}

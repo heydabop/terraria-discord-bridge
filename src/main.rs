@@ -2,26 +2,22 @@ mod handler;
 mod strings;
 mod terraria_pcap;
 
-use postgres::types::Type;
-use postgres::NoTls;
-use r2d2_postgres::r2d2::Pool;
-use r2d2_postgres::PostgresConnectionManager;
 use regex::Regex;
 use serde::Deserialize;
 use serenity::client::Client;
 use serenity::framework::standard::macros::{command, group};
-use serenity::framework::standard::{CommandError, CommandResult, StandardFramework};
-use serenity::http::{CacheHttp, Http};
+use serenity::framework::standard::{CommandResult, StandardFramework};
+use serenity::http::Http;
 use serenity::model::channel::Message;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
-use std::error::Error;
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
-use std::thread;
 
 #[derive(Deserialize)]
 struct Config {
@@ -48,99 +44,94 @@ struct TcpDumpConfig {
     port: u16,
 }
 
-struct DbClient;
+pub struct DbClient;
 
 impl TypeMapKey for DbClient {
-    type Value = Pool<PostgresConnectionManager<NoTls>>;
+    type Value = Pool<Postgres>;
 }
 
 #[group]
 #[commands(deaths, playing)]
 struct Terraria;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
 
-    let mut db_config = postgres::Config::new();
-    db_config
+    let db_options = PgConnectOptions::new()
         .host(&cfg.postgres.host)
         .port(cfg.postgres.port)
-        .user(&cfg.postgres.user)
-        .dbname(&cfg.postgres.dbname)
+        .username(&cfg.postgres.user)
+        .database(&cfg.postgres.dbname)
         .password(&cfg.postgres.pass);
-    let db_client_pcap = db_config
-        .connect(NoTls)
+
+    let db_pool = PgPoolOptions::new()
+        .min_connections(1)
+        .max_connections(4)
+        .connect_with(db_options)
+        .await
         .expect("Unable to connect to postgres");
-    let db_client_logger = db_config
-        .connect(NoTls)
-        .expect("Unable to connect to postgres");
-    let db_pool_serenity = Pool::new(PostgresConnectionManager::new(db_config, NoTls))
-        .expect("Unable to create postgres connection pool");
 
     let client_handler = handler::Handler {
         playing: cfg.server_url,
         bridge_channel_id: cfg.bridge_channel_id,
     };
 
-    let mut client = Client::new(cfg.bot_token, client_handler).expect("Error creating client");
-    client.with_framework(
-        StandardFramework::new()
-            .configure(|c| c.prefix("!").allow_dm(false).case_insensitivity(true))
-            .group(&TERRARIA_GROUP),
-    );
+    let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
+    let mut client = Client::builder(cfg.bot_token, intents)
+        .framework(
+            StandardFramework::new()
+                .configure(|c| c.prefix("/").allow_dm(false).case_insensitivity(true))
+                .group(&TERRARIA_GROUP),
+        )
+        .type_map_insert::<DbClient>(db_pool.clone())
+        .event_handler(client_handler)
+        .await
+        .expect("Error creating discord client");
 
     {
-        // Add server stdin named pipe to client's shared data
-        let mut data = client.data.write();
-        data.insert::<DbClient>(db_pool_serenity);
+        let http = client.cache_and_http.http.clone();
+        let pool = db_pool.clone();
+        tokio::spawn(send_loglines(
+            cfg.server_logfile.clone(),
+            http,
+            ChannelId(cfg.bridge_channel_id),
+            pool,
+        ));
     }
 
-    // Handle SIGINT and SIGTERM and shutdown client before killing
-    let shutdown_manager = client.shard_manager.clone();
-    if let Err(e) = ctrlc::set_handler(move || {
-        shutdown_manager.lock().shutdown_all();
-    }) {
-        eprintln!("Error setting SIGINT handler: {}", e);
+    {
+        let http = client.cache_and_http.http.clone();
+        let pool = db_pool.clone();
+        tokio::spawn(terraria_pcap::parse_packets(
+            http,
+            ChannelId(cfg.bridge_channel_id),
+            cfg.tcpdump.interface.clone(),
+            cfg.tcpdump.port,
+            pool,
+        ));
     }
 
-    send_loglines(
-        &cfg.server_logfile,
-        client.cache_and_http.http.clone(),
-        ChannelId(cfg.bridge_channel_id),
-        db_client_logger,
-    )
-    .expect("Unable to start log file thread");
-
-    terraria_pcap::parse_packets(
-        client.cache_and_http.http.clone(),
-        ChannelId(cfg.bridge_channel_id),
-        &cfg.tcpdump.interface,
-        cfg.tcpdump.port,
-        db_client_pcap,
-    )
-    .expect("Unable to start packet parsing thread");
-
-    if let Err(e) = client.start() {
+    if let Err(e) = client.start().await {
         eprintln!("An error occurred while running the client: {:?}", e);
     }
 }
 
 #[command]
-fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
-    let data = ctx.data.read();
-    let pool = data
-        .get::<DbClient>()
+async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
+    let data = ctx.data.read().await;
+    let db = data
+        .get::<crate::DbClient>()
         .expect("Failed to get database pool from context");
-    let mut db = pool.get().expect("Failed to get connection from pool");
 
-    match db.query("SELECT victim FROM death", &[]) {
-        Err(e) => Err(CommandError(format!("Unable to query deaths: {}", e))),
+    match sqlx::query!("SELECT victim FROM death").fetch_all(db).await {
+        Err(e) => Err(format!("Unable to query deaths: {}", e).into()),
         Ok(rows) => {
             let mut death_map: HashMap<String, u32> = HashMap::new();
             for row in rows {
-                let victim: String = row.get(0);
+                let victim: String = row.victim;
                 match death_map.get(&victim) {
                     None => death_map.insert(victim, 1),
                     Some(&victim_deaths) => death_map.insert(victim, victim_deaths + 1),
@@ -157,11 +148,8 @@ fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
                 writeln!(content, "{} - {}", death.0, death.1)?;
             }
 
-            if let Err(e) = msg.channel_id.say(ctx.http(), content) {
-                return Err(CommandError(format!(
-                    "Error replying to deaths command: {}",
-                    e
-                )));
+            if let Err(e) = msg.channel_id.say(&ctx.http, content).await {
+                return Err(format!("Error replying to deaths command: {}", e).into());
             }
 
             Ok(())
@@ -170,41 +158,26 @@ fn deaths(ctx: &mut Context, msg: &Message) -> CommandResult {
 }
 
 #[command]
-fn playing(_ctx: &mut Context, _msg: &Message) -> CommandResult {
-    if let Err(e) = Command::new("tmux")
+async fn playing(_ctx: &Context, _msg: &Message) -> CommandResult {
+    std::process::Command::new("tmux")
         .args(&["send-keys", "-t", "terraria", "playing\r\n"])
-        .output()
-    {
-        return Err(CommandError(format!("Error writing to tmux pane: {}", e)));
-    }
+        .output()?;
 
     Ok(())
 }
 
 // "tail"s server logfile, sending new lines to discord
-fn send_loglines(
-    filename: &str,
+async fn send_loglines(
+    filename: String,
     http: Arc<Http>,
     channel_id: ChannelId,
-    mut db: postgres::Client,
-) -> Result<(), Box<dyn Error>> {
+    db: Pool<Postgres>,
+) {
     let tail = Command::new("tail")
         .stdout(Stdio::piped())
-        .args(&["-n", "0", "-F", filename])
-        .spawn()?;
-
-    let insert_join = db.prepare_typed(
-        "INSERT INTO server_join(username) VALUES ($1)",
-        &[Type::VARCHAR],
-    )?;
-    let insert_leave = db.prepare_typed(
-        "INSERT INTO server_leave(username) VALUES ($1)",
-        &[Type::VARCHAR],
-    )?;
-    let insert_message = db.prepare_typed(
-        "INSERT INTO  message(author, content) VALUES ($1, $2)",
-        &[Type::VARCHAR, Type::VARCHAR],
-    )?;
+        .args(&["-n", "0", "-F", &filename])
+        .spawn()
+        .expect("error spawning log tail");
 
     // Look for chat messages, joins, and leaves
     let chat_regex = Regex::new("^(?:: )*<(?P<user>.+?)> (?P<message>.+)$").unwrap();
@@ -216,56 +189,67 @@ fn send_loglines(
 
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
-    thread::spawn(move || {
-        loop {
-            let mut line = String::new();
-            if let Err(e) = reader.read_line(&mut line) {
-                eprintln!("Error reading from tail stdout: {}", e);
-                continue;
-            }
-            let line = line.trim();
+    println!("starting log reader loop");
+    loop {
+        let mut line = String::new();
+        if let Err(e) = reader.read_line(&mut line) {
+            eprintln!("Error reading from tail stdout: {}", e);
+            continue;
+        }
+        let line = line.trim();
 
-            // If line has content and matches one of the lines we want to send to discord
-            if let Some(caps) = chat_regex.captures(line) {
-                let user = &caps["user"];
-                if user != "Server" {
-                    let message = &caps["message"];
-                    if let Err(e) =
-                        channel_id.say(&http, format!("<{}> {}", &caps["user"], &caps["message"]))
-                    {
-                        eprintln!("Unable to send chat to discord: {}", e);
-                    }
-                    if let Err(e) = db.execute(&insert_message, &[&user, &message]) {
-                        eprintln!("Unable to insert terraria message into db: {}", e);
-                    }
-                }
-            } else if let Some(caps) = join_leave_regex.captures(line) {
-                let user = &caps["user"];
-                let status = &caps["status"];
-                if let Err(e) =
-                    channel_id.say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
+        // If line has content and matches one of the lines we want to send to discord
+        if let Some(caps) = chat_regex.captures(line) {
+            let user = &caps["user"];
+            if user != "Server" {
+                let message = &caps["message"];
+                if let Err(e) = channel_id
+                    .say(&http, format!("<{}> {}", &caps["user"], &caps["message"]))
+                    .await
                 {
                     eprintln!("Unable to send chat to discord: {}", e);
                 }
-                let statement = match status {
-                    "joined" => &insert_join,
-                    "left" => &insert_leave,
-                    _ => continue,
-                };
-                if let Err(e) = db.execute(statement, &[&user]) {
-                    eprintln!("Error inserting terraria user status: {}", e);
-                }
-            } else if let Some(caps) = playing_regex.captures(line) {
-                if let Err(e) = channel_id.say(&http, &caps["user"]) {
-                    eprintln!("Unable to send playing to discord: {}", e);
-                }
-            } else if let Some(caps) = connected_regex.captures(line) {
-                if let Err(e) = channel_id.say(&http, &caps[1]) {
-                    eprintln!("Unable to send playing count to discord: {}", e);
+                if let Err(e) = sqlx::query!(
+                    r#"INSERT INTO message(author, content) VALUES ($1, $2)"#,
+                    user,
+                    message
+                )
+                .execute(&db)
+                .await
+                {
+                    eprintln!("Unable to insert terraria message into db: {}", e);
                 }
             }
+        } else if let Some(caps) = join_leave_regex.captures(line) {
+            let user = &caps["user"];
+            let status = &caps["status"];
+            if let Err(e) = channel_id
+                .say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
+                .await
+            {
+                eprintln!("Unable to send chat to discord: {}", e);
+            }
+            if let Err(e) = match status {
+                "joined" => sqlx::query!(r#"INSERT INTO server_join(username) VALUES ($1)"#, user)
+                    .execute(&db)
+                    .await
+                    .map(|_| ()),
+                "left" => sqlx::query!(r#"INSERT INTO server_leave(username) VALUES ($1)"#, user)
+                    .execute(&db)
+                    .await
+                    .map(|_| ()),
+                _ => Ok(()),
+            } {
+                eprintln!("Error inserting terraria user status: {}", e);
+            }
+        } else if let Some(caps) = playing_regex.captures(line) {
+            if let Err(e) = channel_id.say(&http, &caps["user"]).await {
+                eprintln!("Unable to send playing to discord: {}", e);
+            }
+        } else if let Some(caps) = connected_regex.captures(line) {
+            if let Err(e) = channel_id.say(&http, &caps[1]).await {
+                eprintln!("Unable to send playing count to discord: {}", e);
+            }
         }
-    });
-
-    Ok(())
+    }
 }
