@@ -12,7 +12,7 @@ use serenity::model::channel::Message;
 use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::{Pool, Postgres};
+use sqlx::{ConnectOptions, Pool, Postgres};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
@@ -64,12 +64,13 @@ async fn main() {
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
 
-    let db_options = PgConnectOptions::new()
+    let mut db_options = PgConnectOptions::new()
         .host(&cfg.postgres.host)
         .port(cfg.postgres.port)
         .username(&cfg.postgres.user)
         .database(&cfg.postgres.dbname)
         .password(&cfg.postgres.pass);
+    db_options.disable_statement_logging();
 
     let db_pool = PgPoolOptions::new()
         .min_connections(1)
@@ -117,6 +118,14 @@ async fn main() {
             pool,
         ));
     }
+
+    let shard_manager = client.shard_manager.clone();
+    tokio::spawn(async move {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            error!(error = %e, "error setting sigint handler");
+        }
+        shard_manager.lock().await.shutdown_all().await;
+    });
 
     if let Err(e) = client.start().await {
         error!(error = %e, "An error occurred while running the client");
