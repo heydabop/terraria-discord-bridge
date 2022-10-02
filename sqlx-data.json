@@ -60,6 +60,26 @@
     },
     "query": "INSERT INTO server_join(username) VALUES ($1)"
   },
+  "9ef44b7c406976ed11a9fab5acb04d1889d572028c10d71592dcf0567bd06360": {
+    "describe": {
+      "columns": [
+        {
+          "name": "last_date",
+          "ordinal": 0,
+          "type_info": "Timestamptz"
+        }
+      ],
+      "nullable": [
+        null
+      ],
+      "parameters": {
+        "Left": [
+          "Text"
+        ]
+      }
+    },
+    "query": "SELECT max(create_date) as last_date FROM death WHERE victim = $1"
+  },
   "cdd111bae19b2a5078d0808f9cf09988a9d9220b410743e16a8c8be3180dd7ae": {
     "describe": {
       "columns": [],

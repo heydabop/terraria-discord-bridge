@@ -62,8 +62,6 @@ pub async fn parse_packets(
     let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
         .expect("Unable to start pcap reader");
 
-    let mut last_deaths: HashMap<String, u32> = HashMap::new();
-
     let mut last_sends: HashMap<String, u32> = HashMap::new();
 
     info!("starting packet reader loop");
@@ -98,14 +96,7 @@ pub async fn parse_packets(
         }
         let message = if length >= 12 && data[8..13] == [0x44, 0x65, 0x61, 0x74, 0x68] {
             // death messages start with "Death"
-            try_death(
-                data,
-                packet.epoch_seconds(),
-                &strings,
-                &mut last_deaths,
-                &db,
-            )
-            .await
+            try_death(data, &strings, &db).await
         } else {
             match try_generic(&data[6..], &strings) {
                 None => None,
@@ -129,9 +120,7 @@ pub async fn parse_packets(
 
 async fn try_death(
     data: &[u8],
-    epoch_seconds: u32,
     strings: &HashMap<&'static str, HashMap<&'static str, &'static str>>,
-    last_deaths: &mut HashMap<String, u32>,
     db: &Pool<Postgres>,
 ) -> Option<String> {
     match build_death(&data[STRING_START..], strings) {
@@ -140,23 +129,32 @@ async fn try_death(
             None
         }
         Ok(death) => {
-            let last_death = last_deaths.get(&death.victim);
-
-            let seconds_since_last: Option<i32> = if let Some(&last_death) = last_death {
-                let seconds = epoch_seconds - last_death;
-                if seconds < 5 {
-                    //repeat packet, ignore
-                    return None;
-                }
-                match seconds.try_into() {
-                    Ok(s) => Some(s),
-                    Err(e) => {
-                        error!(error = %e, seconds, "unable to convert seconds to i32");
-                        None
+            #[allow(clippy::panic)]
+            let seconds_since_last: Option<i32> = match sqlx::query!(
+                "SELECT max(create_date) as last_date FROM death WHERE victim = $1",
+                death.victim
+            )
+            .fetch_one(db)
+            .await
+            {
+                Ok(r) => match r.last_date {
+                    Some(last_date) => {
+                        let now = sqlx::types::chrono::Local::now();
+                        let since = now.signed_duration_since(last_date);
+                        match since.num_seconds().try_into() {
+                            Ok(s) => Some(s),
+                            Err(e) => {
+                                error!(error = %e, "error converting seconds since death");
+                                None
+                            }
+                        }
                     }
+                    None => None,
+                },
+                Err(e) => {
+                    error!(error = %e, "error getting last death");
+                    None
                 }
-            } else {
-                None
             };
 
             #[allow(clippy::panic)]
@@ -164,8 +162,6 @@ async fn try_death(
                                          death.victim, death.killer, death.weapon, death.msg, seconds_since_last, death.is_pk).execute(db).await {
                 error!(error = %e, "Error inserting death");
             }
-
-            last_deaths.insert(death.victim, epoch_seconds);
 
             let message = match seconds_since_last {
                 None => death.msg,
