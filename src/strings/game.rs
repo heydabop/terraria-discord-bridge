@@ -88,6 +88,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("DarknessSafe", "The danger of the dark has passed."),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

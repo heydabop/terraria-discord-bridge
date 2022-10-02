@@ -933,6 +933,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("MoonBoulder", "Moon Boulder"),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

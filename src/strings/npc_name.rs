@@ -699,6 +699,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("BoundTownSlimeYellow", "Mystic Frog"),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

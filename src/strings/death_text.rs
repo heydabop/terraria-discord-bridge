@@ -68,6 +68,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Space_5", "{0} departed {1}."),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

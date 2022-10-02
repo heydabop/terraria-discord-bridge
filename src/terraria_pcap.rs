@@ -7,6 +7,7 @@ use std::error::Error;
 use std::fmt;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use tracing::{error, info};
 
 const STRING_START: usize = 7;
 
@@ -39,6 +40,7 @@ pub async fn parse_packets(
     port: u16,
     db: Pool<Postgres>,
 ) {
+    #[allow(clippy::expect_used)]
     let tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
         .args(&[
@@ -56,6 +58,7 @@ pub async fn parse_packets(
 
     let strings = strings::get();
 
+    #[allow(clippy::expect_used)]
     let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
         .expect("Unable to start pcap reader");
 
@@ -63,19 +66,19 @@ pub async fn parse_packets(
 
     let mut last_sends: HashMap<String, u32> = HashMap::new();
 
-    println!("starting packet reader loop");
+    info!("starting packet reader loop");
     loop {
         let packet = match reader.read_packet() {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("Unable to read packet: {}", e);
+                error!(error = %e, "Unable to read packet");
                 return;
             }
         };
         let data = match reader.data(packet.bytes()) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("Unable to parse data from packet: {}", e);
+                error!(error = %e, "Unable to parse data from packet");
                 continue;
             }
         };
@@ -117,12 +120,10 @@ pub async fn parse_packets(
             last_sends.insert(message.clone(), packet.epoch_seconds());
             if !repeat {
                 if let Err(e) = channel_id.say(&http, message).await {
-                    eprintln!("Unable to announce to discord: {}", e);
+                    error!(error = %e, "Unable to announce to discord");
                 }
             }
         }
-
-        continue;
     }
 }
 
@@ -135,26 +136,33 @@ async fn try_death(
 ) -> Option<String> {
     match build_death(&data[STRING_START..], strings) {
         Err(e) => {
-            eprintln!("Error building death message: {}", e);
+            error!(error = %e, "Error building death message");
             None
         }
         Ok(death) => {
             let last_death = last_deaths.get(&death.victim);
 
-            let seconds_since_last = if let Some(&last_death) = last_death {
+            let seconds_since_last: Option<i32> = if let Some(&last_death) = last_death {
                 let seconds = epoch_seconds - last_death;
                 if seconds < 5 {
                     //repeat packet, ignore
                     return None;
                 }
-                Some(seconds)
+                match seconds.try_into() {
+                    Ok(s) => Some(s),
+                    Err(e) => {
+                        error!(error = %e, seconds, "unable to convert seconds to i32");
+                        None
+                    }
+                }
             } else {
                 None
             };
 
+            #[allow(clippy::panic)]
             if let Err(e) = sqlx::query!(r#"INSERT INTO death(victim, killer, weapon, message, seconds_since_last, is_pk) VALUES ($1, $2, $3, $4, $5, $6)"#,
-                                         death.victim, death.killer, death.weapon, death.msg, seconds_since_last.map(|seconds| seconds as i32), death.is_pk).execute(db).await {
-                eprintln!("Error inserting death: {}", e);
+                                         death.victim, death.killer, death.weapon, death.msg, seconds_since_last, death.is_pk).execute(db).await {
+                error!(error = %e, "Error inserting death");
             }
 
             last_deaths.insert(death.victim, epoch_seconds);
@@ -173,7 +181,7 @@ async fn try_death(
     }
 }
 
-fn friendly_duration(secs: u32) -> String {
+fn friendly_duration(secs: i32) -> String {
     if secs < 120 {
         format!("{} seconds", secs)
     } else if secs < 7200 {
@@ -199,7 +207,7 @@ fn lookup_string<'a>(
 ) -> Option<&'a str> {
     match s.find('.') {
         None => {
-            eprintln!("Missing . in lookup: {}", s);
+            error!(string = s, "Missing . in lookup");
             None
         }
         Some(i) => {
@@ -207,12 +215,12 @@ fn lookup_string<'a>(
             let s2 = &s[i + 1..];
             match strings.get(s1) {
                 None => {
-                    eprintln!("Unable to lookup first half of {}", s);
+                    error!(string = s, "Unable to lookup first half");
                     None
                 }
                 Some(strings) => match strings.get(s2) {
                     None => {
-                        eprintln!("Unable to lookup second half of {}", s);
+                        error!(string = s, "Unable to lookup second half");
                         None
                     }
                     Some(s_final) => Some(s_final),
@@ -361,7 +369,7 @@ fn try_generic(
     offset += 1;
     match get_string(data, offset) {
         Err(e) => {
-            eprintln!("Error parsing first generic string: {}\n{:?}", e, data);
+            error!(error = %e, ?data, "Error parsing first generic string");
             None
         }
         Ok(key) => {
@@ -377,7 +385,7 @@ fn try_generic(
                 return None;
             }
 
-            println!("generic: {:?}", data);
+            info!(?data, "generic");
             let num_subs = data[offset] as usize;
             offset += 1;
             let mut subs = Vec::with_capacity(num_subs);
@@ -394,7 +402,7 @@ fn try_generic(
                 Some(val) => val.to_string(),
             };
             for (i, p) in subs.iter().enumerate() {
-                println!("replace: {{{}}} {}", i, p);
+                info!("replace: {{{}}} {}", i, p);
                 val = val.replacen(&format!("{{{}}}", i), p, 1);
             }
             Some((val, offset))

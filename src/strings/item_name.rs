@@ -5518,6 +5518,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("JimsDroneVisor", "FPV Goggles"),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

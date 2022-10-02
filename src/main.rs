@@ -18,6 +18,7 @@ use std::fmt::Write as _;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
+use tracing::{error, info};
 
 #[derive(Deserialize)]
 struct Config {
@@ -55,7 +56,10 @@ impl TypeMapKey for DbClient {
 struct Terraria;
 
 #[tokio::main]
+#[allow(clippy::panic, clippy::expect_used)]
 async fn main() {
+    tracing_subscriber::fmt::init();
+
     let cfg: Config =
         toml::from_str(&std::fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
@@ -115,17 +119,19 @@ async fn main() {
     }
 
     if let Err(e) = client.start().await {
-        eprintln!("An error occurred while running the client: {:?}", e);
+        error!(error = %e, "An error occurred while running the client");
     }
 }
 
 #[command]
 async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
     let data = ctx.data.read().await;
+    #[allow(clippy::expect_used)]
     let db = data
         .get::<crate::DbClient>()
         .expect("Failed to get database pool from context");
 
+    #[allow(clippy::panic)]
     match sqlx::query!("SELECT victim FROM death").fetch_all(db).await {
         Err(e) => Err(format!("Unable to query deaths: {}", e).into()),
         Ok(rows) => {
@@ -173,6 +179,7 @@ async fn send_loglines(
     channel_id: ChannelId,
     db: Pool<Postgres>,
 ) {
+    #[allow(clippy::expect_used)]
     let tail = Command::new("tail")
         .stdout(Stdio::piped())
         .args(&["-n", "0", "-F", &filename])
@@ -180,20 +187,25 @@ async fn send_loglines(
         .expect("error spawning log tail");
 
     // Look for chat messages, joins, and leaves
+    #[allow(clippy::unwrap_used)]
     let chat_regex = Regex::new("^(?:: )*<(?P<user>.+?)> (?P<message>.+)$").unwrap();
+    #[allow(clippy::unwrap_used)]
     let join_leave_regex =
         Regex::new("^(?:: )*(?P<user>\\S.*) has (?P<status>joined|left)\\.$").unwrap();
+    #[allow(clippy::unwrap_used)]
     let playing_regex =
         Regex::new("^(?:: )*(?P<user>.+?) \\((?:\\d{1,3}\\.){3}\\d{1,3}:\\d+\\)$").unwrap();
+    #[allow(clippy::unwrap_used)]
     let connected_regex = Regex::new("^(?:: )*(\\w+ players? connected\\.)$").unwrap();
 
+    #[allow(clippy::expect_used)]
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
 
-    println!("starting log reader loop");
+    info!("starting log reader loop");
     loop {
         let mut line = String::new();
         if let Err(e) = reader.read_line(&mut line) {
-            eprintln!("Error reading from tail stdout: {}", e);
+            error!(error = %e, "Error reading from tail stdout");
             continue;
         }
         let line = line.trim();
@@ -207,8 +219,9 @@ async fn send_loglines(
                     .say(&http, format!("<{}> {}", &caps["user"], &caps["message"]))
                     .await
                 {
-                    eprintln!("Unable to send chat to discord: {}", e);
+                    error!(error = %e, "Unable to send chat to discord");
                 }
+                #[allow(clippy::panic)]
                 if let Err(e) = sqlx::query!(
                     r#"INSERT INTO message(author, content) VALUES ($1, $2)"#,
                     user,
@@ -217,7 +230,7 @@ async fn send_loglines(
                 .execute(&db)
                 .await
                 {
-                    eprintln!("Unable to insert terraria message into db: {}", e);
+                    error!(error = %e, "Unable to insert terraria message into db");
                 }
             }
         } else if let Some(caps) = join_leave_regex.captures(line) {
@@ -227,8 +240,9 @@ async fn send_loglines(
                 .say(&http, format!("{} has {}", &caps["user"], &caps["status"]))
                 .await
             {
-                eprintln!("Unable to send chat to discord: {}", e);
+                error!(error = %e, "Unable to send chat to discord");
             }
+            #[allow(clippy::panic)]
             if let Err(e) = match status {
                 "joined" => sqlx::query!(r#"INSERT INTO server_join(username) VALUES ($1)"#, user)
                     .execute(&db)
@@ -240,15 +254,15 @@ async fn send_loglines(
                     .map(|_| ()),
                 _ => Ok(()),
             } {
-                eprintln!("Error inserting terraria user status: {}", e);
+                error!(error = %e, "Error inserting terraria user status");
             }
         } else if let Some(caps) = playing_regex.captures(line) {
             if let Err(e) = channel_id.say(&http, &caps["user"]).await {
-                eprintln!("Unable to send playing to discord: {}", e);
+                error!(error = %e, "Unable to send playing to discord");
             }
         } else if let Some(caps) = connected_regex.captures(line) {
             if let Err(e) = channel_id.say(&http, &caps[1]).await {
-                eprintln!("Unable to send playing count to discord: {}", e);
+                error!(error = %e, "Unable to send playing count to discord");
             }
         }
     }

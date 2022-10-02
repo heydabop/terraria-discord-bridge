@@ -7,6 +7,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Projectile", "{0} by {1}."),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

@@ -8,6 +8,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("HasArrived", "{0} has arrived!"),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

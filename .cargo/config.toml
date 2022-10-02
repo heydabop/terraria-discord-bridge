@@ -1,0 +1,13 @@
+[build]
+rustflags = [
+    "-Wclippy::pedantic",
+    "-Wclippy::print_stdout",
+    "-Wclippy::print_stderr",
+    "-Wclippy::panic",
+    "-Wclippy::expect_used",
+    "-Wclippy::unwrap_used",
+    "-Aclippy::too_many_lines",
+    "-Aclippy::module_name_repetitions",
+    "-Aclippy::enum_glob_use",
+    "-Aclippy::single_match_else"
+]

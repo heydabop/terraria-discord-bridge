@@ -86,6 +86,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Smote", "{0} was smote"),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }

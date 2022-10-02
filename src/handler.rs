@@ -3,6 +3,7 @@ use serenity::model::gateway::{Activity, Ready};
 use serenity::model::id::UserId;
 use serenity::prelude::*;
 use std::process::Command;
+use tracing::error;
 
 struct OwnUserId;
 
@@ -32,7 +33,7 @@ impl EventHandler for Handler {
         if own_id.is_none() {
             // If we couldn't get our ID from shared data (failed in ready?) then try to get it from http/cache
             match ctx.http.get_current_user().await {
-                Err(e) => eprintln!("Error getting self: {}", e),
+                Err(e) => error!(error = %e, "Error getting self"),
                 Ok(me) => {
                     // Set ID in shared data if we got it this time
                     let mut data = ctx.data.write().await;
@@ -67,7 +68,7 @@ impl EventHandler for Handler {
                         ])
                         .output()
                     {
-                        eprintln!("Error writing message to tmux pane: {}", e);
+                        error!(error = %e, "Error writing message to tmux pane");
                     }
                 }
             }
@@ -81,7 +82,7 @@ impl EventHandler for Handler {
 
         // Get our user ID and save to shared data
         match ctx.http.get_current_user().await {
-            Err(e) => eprintln!("Error getting self: {}", e),
+            Err(e) => error!(error = %e, "Error getting self"),
             Ok(me) => {
                 let mut data = ctx.data.write().await;
                 data.insert::<OwnUserId>(me.id);

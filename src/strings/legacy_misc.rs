@@ -117,6 +117,6 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("9", "You feel an evil presence watching you..."),
     ]
     .iter()
-    .cloned()
+    .copied()
     .collect()
 }
