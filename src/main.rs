@@ -119,14 +119,6 @@ async fn main() {
         ));
     }
 
-    let shard_manager = client.shard_manager.clone();
-    tokio::spawn(async move {
-        if let Err(e) = tokio::signal::ctrl_c().await {
-            error!(error = %e, "error setting sigint handler");
-        }
-        shard_manager.lock().await.shutdown_all().await;
-    });
-
     if let Err(e) = client.start().await {
         error!(error = %e, "An error occurred while running the client");
     }
