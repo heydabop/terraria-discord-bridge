@@ -106,7 +106,7 @@ pub async fn parse_packets(
         if let Some(message) = message {
             let repeat = match last_sends.get(&message) {
                 None => false,
-                Some(last_send) => packet.epoch_seconds() - last_send < 3,
+                Some(last_send) => packet.epoch_seconds() - last_send < 5,
             };
             last_sends.insert(message.clone(), packet.epoch_seconds());
             if !repeat {
@@ -141,6 +141,10 @@ async fn try_death(
                     Some(last_date) => {
                         let now = sqlx::types::chrono::Local::now();
                         let since = now.signed_duration_since(last_date);
+                        if since.num_seconds() < 9 {
+                            //respawn timer is 10s, this is a repeat packet/message
+                            return None;
+                        }
                         match since.num_seconds().try_into() {
                             Ok(s) => Some(s),
                             Err(e) => {
