@@ -5,6 +5,7 @@ mod death_text_generic;
 mod game;
 mod item_name;
 mod legacy_misc;
+mod legacy_world_gen;
 mod npc_name;
 mod projectile_name;
 
@@ -19,6 +20,7 @@ pub fn get() -> HashMap<&'static str, HashMap<&'static str, &'static str>> {
         ("Game", game::get()),
         ("ItemName", item_name::get()),
         ("LegacyMisc", legacy_misc::get()),
+        ("LegacyWorldGen", legacy_world_gen::get()),
         ("NPCName", npc_name::get()),
         ("ProjectileName", projectile_name::get()),
     ]
