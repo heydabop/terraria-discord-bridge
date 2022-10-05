@@ -5,8 +5,9 @@ use sqlx::{Pool, Postgres};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::process::Command;
 use tracing::{error, info};
 
 const STRING_START: usize = 7;
@@ -41,7 +42,7 @@ pub async fn parse_packets(
     db: Pool<Postgres>,
 ) {
     #[allow(clippy::expect_used)]
-    let tcpdump = Command::new("tcpdump")
+    let mut tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
         .args(&[
             "-i",
@@ -53,24 +54,31 @@ pub async fn parse_packets(
             "-w",
             "-",
         ])
+        .kill_on_drop(true)
         .spawn()
         .expect("error spawning tcpdump process");
 
     let strings = strings::get();
 
     #[allow(clippy::expect_used)]
-    let mut reader = pcap::Reader::new(tcpdump.stdout.expect("Missing stdout on tcpdump child"))
-        .expect("Unable to start pcap reader");
+    let mut reader = pcap::Reader::new(
+        tcpdump
+            .stdout
+            .take()
+            .expect("Missing stdout on tcpdump child"),
+    )
+    .await
+    .expect("Unable to start pcap reader");
 
     let mut last_sends: HashMap<String, u32> = HashMap::new();
 
     info!("starting packet reader loop");
     loop {
-        let packet = match reader.read_packet() {
+        let packet = match reader.read_packet().await {
             Ok(p) => p,
             Err(e) => {
                 error!(error = %e, "Unable to read packet");
-                return;
+                break;
             }
         };
         let data = match reader.data(packet.bytes()) {
@@ -115,6 +123,10 @@ pub async fn parse_packets(
                 }
             }
         }
+    }
+
+    if let Err(e) = tcpdump.kill().await {
+        error!(error = %e, "Error killing tcpdump");
     }
 }
 

@@ -15,9 +15,10 @@ use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{ConnectOptions, Pool, Postgres};
 use std::collections::HashMap;
 use std::fmt::Write as _;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
 use tracing::{error, info};
 
 #[derive(Deserialize)]
@@ -166,9 +167,10 @@ async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
 
 #[command]
 async fn playing(_ctx: &Context, _msg: &Message) -> CommandResult {
-    std::process::Command::new("tmux")
+    Command::new("tmux")
         .args(&["send-keys", "-t", "terraria", "playing\r\n"])
-        .output()?;
+        .output()
+        .await?;
 
     Ok(())
 }
@@ -184,6 +186,7 @@ async fn send_loglines(
     let tail = Command::new("tail")
         .stdout(Stdio::piped())
         .args(&["-n", "0", "-F", &filename])
+        .kill_on_drop(true)
         .spawn()
         .expect("error spawning log tail");
 
@@ -205,7 +208,7 @@ async fn send_loglines(
     info!("starting log reader loop");
     loop {
         let mut line = String::new();
-        if let Err(e) = reader.read_line(&mut line) {
+        if let Err(e) = reader.read_line(&mut line).await {
             error!(error = %e, "Error reading from tail stdout");
             continue;
         }
