@@ -135,7 +135,7 @@ async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
 
     #[allow(clippy::panic)]
     match sqlx::query!("SELECT victim FROM death").fetch_all(db).await {
-        Err(e) => Err(format!("Unable to query deaths: {}", e).into()),
+        Err(e) => Err(format!("Unable to query deaths: {e}").into()),
         Ok(rows) => {
             let mut death_map: HashMap<String, u32> = HashMap::new();
             for row in rows {
@@ -157,7 +157,7 @@ async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
             }
 
             if let Err(e) = msg.channel_id.say(&ctx.http, content).await {
-                return Err(format!("Error replying to deaths command: {}", e).into());
+                return Err(format!("Error replying to deaths command: {e}").into());
             }
 
             Ok(())
@@ -168,7 +168,7 @@ async fn deaths(ctx: &Context, msg: &Message) -> CommandResult {
 #[command]
 async fn playing(_ctx: &Context, _msg: &Message) -> CommandResult {
     Command::new("tmux")
-        .args(&["send-keys", "-t", "terraria", "playing\r\n"])
+        .args(["send-keys", "-t", "terraria", "playing\r\n"])
         .output()
         .await?;
 
@@ -185,7 +185,7 @@ async fn send_loglines(
     #[allow(clippy::expect_used)]
     let tail = Command::new("tail")
         .stdout(Stdio::piped())
-        .args(&["-n", "0", "-F", &filename])
+        .args(["-n", "0", "-F", &filename])
         .kill_on_drop(true)
         .spawn()
         .expect("error spawning log tail");

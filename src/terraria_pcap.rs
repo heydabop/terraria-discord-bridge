@@ -44,7 +44,7 @@ pub async fn parse_packets(
     #[allow(clippy::expect_used)]
     let mut tcpdump = Command::new("tcpdump")
         .stdout(Stdio::piped())
-        .args(&[
+        .args([
             "-i",
             &interface,
             "tcp",
@@ -195,7 +195,7 @@ async fn try_death(
 
 fn friendly_duration(secs: i32) -> String {
     if secs < 120 {
-        format!("{} seconds", secs)
+        format!("{secs} seconds")
     } else if secs < 7200 {
         format!("{:.0} minutes", (f64::from(secs) / 60.0).round())
     } else {
@@ -248,7 +248,7 @@ fn build_death(
 ) -> Result<Death, MissingDeathData> {
     match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
-            desc: format!("Unable to parse first death string: {}", e),
+            desc: format!("Unable to parse first death string: {e}"),
         }),
         Ok(death_type) => {
             let data = &data[death_type.len() + 3..];
@@ -259,7 +259,7 @@ fn build_death(
                 build_from_death_text(data, death_type, strings)
             } else {
                 Err(MissingDeathData {
-                    desc: (format!("Unknown death cause: {}", death_type)),
+                    desc: (format!("Unknown death cause: {death_type}")),
                 })
             }
         }
@@ -275,8 +275,7 @@ fn build_from_death_source(
     match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
             desc: format!(
-                "Unable to parse death message base from death source: {}",
-                e
+                "Unable to parse death message base from death source: {e}"
             ),
         }),
         Ok(death_message_base) => {
@@ -289,7 +288,7 @@ fn build_from_death_source(
 
             match get_params(data, strings, num_params) {
                 Err(e) => Err(MissingDeathData {
-                    desc: format!("Error getting death source params: {}", e),
+                    desc: format!("Error getting death source params: {e}"),
                 }),
                 Ok(params) => {
                     // Most death texts consist of something like "{0} was..."
@@ -352,10 +351,10 @@ fn build_from_death_text(
     let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
     match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
-            desc: format!("Unable to parse player name after death text: {}", e),
+            desc: format!("Unable to parse player name after death text: {e}"),
         }),
         Ok(player_name) => Ok(Death {
-            msg: base.replacen("{0}", &format!("**{}**", player_name), 1),
+            msg: base.replacen("{0}", &format!("**{player_name}**"), 1),
             victim: player_name.to_string(),
             killer: None,
             weapon: None,
@@ -415,7 +414,7 @@ fn try_generic(
             };
             for (i, p) in subs.iter().enumerate() {
                 info!("replace: {{{}}} {}", i, p);
-                val = val.replacen(&format!("{{{}}}", i), p, 1);
+                val = val.replacen(&format!("{{{i}}}"), p, 1);
             }
             Some((val, offset))
         }
