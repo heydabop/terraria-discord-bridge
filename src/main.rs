@@ -21,7 +21,6 @@ use tracing::{error, info};
 
 struct Data {
     db: Pool<Postgres>,
-    socket_path: String,
 }
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -30,8 +29,7 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 struct Config {
     bot_token: String,
     bridge_channel_id: u64,
-    journalctl_unit: String,
-    socket_path: String,
+    server_logfile: String,
     postgres: PgConfig,
     tcpdump: TcpDumpConfig,
 }
@@ -91,10 +89,7 @@ async fn main() {
         .setup(|ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data {
-                    db: data_db,
-                    socket_path: cfg.socket_path,
-                })
+                Ok(Data { db: data_db })
             })
         })
         .build();
@@ -108,7 +103,7 @@ async fn main() {
         let http = client.http.clone();
         let pool = db_pool.clone();
         tokio::spawn(send_loglines(
-            cfg.journalctl_unit.clone(),
+            cfg.server_logfile,
             http,
             ChannelId::new(cfg.bridge_channel_id),
             pool,
@@ -175,33 +170,31 @@ async fn deaths(ctx: Context<'_>) -> Result<(), Error> {
 
 #[poise::command(slash_command)]
 async fn playing(ctx: Context<'_>) -> Result<(), Error> {
-    let socket = fs::OpenOptions::new()
-        .write(true)
-        .open(&ctx.data().socket_path)?;
-    Command::new("echo")
-        .args(["playing"])
-        .stdout(socket)
-        .spawn()?
-        .wait()
+    Command::new("tmux")
+        .args(["send-keys", "-t", "terraria", "playing\r\n"])
+        .output()
         .await?;
+
+    ctx.say("Done").await?;
 
     Ok(())
 }
 
 // "tail"s server logfile, sending new lines to discord
 async fn send_loglines(
-    journalctl_unit: String,
+    filename: String,
     http: Arc<Http>,
     channel_id: ChannelId,
     db: Pool<Postgres>,
 ) {
     #[allow(clippy::expect_used)]
-    let tail = Command::new("journalctl")
+    #[allow(clippy::expect_used)]
+    let tail = Command::new("tail")
         .stdout(Stdio::piped())
-        .args(["-o", "cat", "-S", "now", "-qfu", &journalctl_unit])
+        .args(["-n", "0", "-F", &filename])
         .kill_on_drop(true)
         .spawn()
-        .expect("error spawning journalctl tail");
+        .expect("error spawning log tail");
 
     // Look for chat messages, joins, and leaves
     #[allow(clippy::unwrap_used)]

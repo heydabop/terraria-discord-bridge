@@ -1,7 +1,6 @@
 bot_token = "" #Just the token, no "Bot" prefix
 bridge_channel_id = 0
-journalctl_unit = "terraria.service"
-socket_path = "/run/terraria.stdin"
+server_logfile = ""
 
 [postgres]
 host = "localhost"
