@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 #[allow(clippy::too_many_lines)]
 pub fn get() -> HashMap<&'static str, &'static str> {
-    [
+    vec![
         ("BloodMoonMonolith", "Blood Moon Monolith"),
         ("CrimstoneBrick", "Crimstone Brick"),
         ("CrimstoneBrickWall", "Crimstone Brick Wall"),
@@ -5517,6 +5517,7 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("JimsDrone", "Kwad Racer Drone"),
         ("JimsDroneVisor", "FPV Goggles"),
     ]
+    .into_boxed_slice()
     .iter()
     .copied()
     .collect()

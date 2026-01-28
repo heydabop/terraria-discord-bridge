@@ -117,10 +117,8 @@ pub async fn parse_packets(
                 Some(last_send) => packet.epoch_seconds() - last_send < 5,
             };
             last_sends.insert(message.clone(), packet.epoch_seconds());
-            if !repeat {
-                if let Err(e) = channel_id.say(&http, message).await {
-                    error!(error = %e, "Unable to announce to discord");
-                }
+            if !repeat && let Err(e) = channel_id.say(&http, message).await {
+                error!(error = %e, "Unable to announce to discord");
             }
         }
     }
@@ -274,9 +272,7 @@ fn build_from_death_source(
     let base = lookup_string(base_lookup, strings).unwrap_or(base_lookup);
     match get_string(data, 0) {
         Err(e) => Err(MissingDeathData {
-            desc: format!(
-                "Unable to parse death message base from death source: {e}"
-            ),
+            desc: format!("Unable to parse death message base from death source: {e}"),
         }),
         Ok(death_message_base) => {
             let death_message =
@@ -401,10 +397,7 @@ fn try_generic(
             offset += 1;
             let mut subs = Vec::with_capacity(num_subs);
             for _ in 0..num_subs {
-                let sub = match try_generic(&data[offset..], strings) {
-                    None => return None,
-                    Some(sub) => sub,
-                };
+                let sub = try_generic(&data[offset..], strings)?;
                 subs.push(sub.0);
                 offset += sub.1;
             }
