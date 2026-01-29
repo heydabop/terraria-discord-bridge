@@ -468,7 +468,7 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Fritz", "Fritz"),
         ("GiantShelly", "Giant Shelly"),
         ("GiantShelly2", "Giant Shelly"),
-        ("GoblinSummoner", "Goblin Summoner"),
+        ("GoblinSummoner", "Goblin Warlock"),
         ("GraniteFlyer", "Granite Elemental"),
         ("GraniteGolem", "Granite Golem"),
         ("GreekSkeleton", "Hoplite"),
@@ -697,6 +697,21 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("BoundTownSlimeOld", "Old Shaking Chest"),
         ("BoundTownSlimePurple", "Clumsy Balloon Slime"),
         ("BoundTownSlimeYellow", "Mystic Frog"),
+        ("Pufferfish", "Pufferfish"),
+        ("OwlMimic", "Owl"),
+        ("StatueMimic", "Statue"),
+        ("MossZombie", "Moss Zombie"),
+        ("Orca", "Orca"),
+        ("LibrarianSkeleton", "Librarian Skeleton"),
+        ("WaterBoltMimic", "Water Bolt Mimic"),
+        (
+            "PalworldCattivaDistressed",
+            "{$ItemName.PalworldMinionCattiva}",
+        ),
+        (
+            "PalworldFoxsparksDistressed",
+            "{$ItemName.PalworldMinionFoxsparks}",
+        ),
     ]
     .into_boxed_slice()
     .iter()

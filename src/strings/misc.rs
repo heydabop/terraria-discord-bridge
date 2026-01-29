@@ -60,11 +60,17 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("CloudBalloon", "Cloud Ballooon"),
         ("BlizzardBalloon", "Blizzard Balloon"),
         ("SandstormBalloon", "Sandstorm Balloon"),
+        ("CritterGuides", "Guide to Critter Companionship"),
+        ("NatureGuides", "Guide to Environmental Preservation"),
+        ("Seashells", "Seashell or Starfish"),
         ("CombatBookVolumeTwoUsed", "{$Misc.CombatBookUsed}"),
         (
             "PeddlersSatchelUsed",
             "The Traveling Merchant's satchel deepens!",
         ),
+        ("Vampirism", "You have been afflicted with vampirism."),
+        ("GemCritter", "Gem Critter"),
+        ("Jellyfish", "Jellyfish"),
     ]
     .iter()
     .copied()

@@ -45,7 +45,7 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("45", "Planting mushrooms"),
         ("46", "Freeing unused resources"),
         ("47", "Resetting game objects"),
-        ("48", "Setting hard mode"),
+        ("48", "Progressing world..."),
         ("49", "Saving world data:"),
         ("4", "Placing rocks in the dirt"),
         ("50", "Backing up world file"),
@@ -95,6 +95,8 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("89", "Placing objects"),
         ("90", "Forming the depths"),
         ("91", "Not placing traps"),
+        ("92", "A meteor shower is happening!"),
+        ("93", "Coins descend from the heavens!"),
     ]
     .iter()
     .copied()

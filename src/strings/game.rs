@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 pub fn get() -> HashMap<&'static str, &'static str> {
     [
-        ("Wave", "Wave: {0}"),
+        ("Wave", "Wave {0}"),
         ("FirstWave", "First Wave"),
         ("FinalWave", "Final Wave"),
         ("InvasionWave_Type1", "{0}: {1}"),
@@ -28,10 +28,36 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ),
         ("JoinGreeting", "Current players: {0}."),
         ("BedObstructed", "Your bed is obstructed."),
+        (
+            "BedTooCloseToWorldEdge",
+            "Your bed is too close to the world's edge.",
+        ),
+        ("BedRoomIsTooBig", "Your bedroom is too big!"),
+        ("BedRoomIsTooSmall", "Your bedroom is too small!"),
+        ("BedRoomHasHolesInWall", "Your bedroom is missing a wall!"),
+        ("BedRoomIsNotValid", "This is not a valid room for a bed."),
+        (
+            "BedRoomHasUnsafeWalls",
+            "Natural walls in this bedroom need replacing!",
+        ),
         ("PvPFlag", "(PvP)"),
         ("DroppedCoins", "dropped {0}"),
         ("RespawnInPrefix", ""),
         ("RespawnInSuffix", "{0}"),
+        ("SpectateHint", "Left/Right to spectate"),
+        (
+            "SpectateHintChangeTarget",
+            "Left/Right to change target. Jump to return",
+        ),
+        (
+            "SpectateSinglePlayer",
+            "All you see is your reflection in the orb.",
+        ),
+        ("SpectateNoTargets", "You're by yourself..."),
+        ("GamepadSpectate", "Spectate"),
+        ("GamepadSpectateChangeTarget", "Change target"),
+        ("GamepadSpectateCancel", "Return"),
+        ("GamepadSpectateWormhole", "Use wormhole potion"),
         ("InvasionPoints", "{0} points"),
         ("WaveMessage", "Wave {0}: {1}"),
         ("WaveCleared", "Cleared {0}"),

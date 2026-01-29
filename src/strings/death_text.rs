@@ -66,6 +66,21 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("Space_3", "{0} left orbit."),
         ("Space_4", "{0} has ascended."),
         ("Space_5", "{0} departed {1}."),
+        ("TeamTank", "{0} died for the team."),
+        ("Underground_1", "{0} was never seen again."),
+        ("Underground_2", "{0} dug too deep."),
+        ("Underground_3", "{0} never stopped falling."),
+        ("Underground_4", "{0} entered the abyss."),
+        ("Underground_5", "{0} reached the core."),
+        ("VampireBurningInDaylight_1", "{0} shriveled in the sun."),
+        ("VampireBurningInDaylight_2", "{0} got sundried."),
+        ("VampireBurningInDaylight_3", "{0} was not a daywalker."),
+        (
+            "VampireBurningInDaylight_4",
+            "{0} forgot about daylight savings time.",
+        ),
+        ("VampireBurningInDaylight_5", "{0} went toasty."),
+        ("VampireBurningInDaylight_6", "{0} let themselves cook."),
     ]
     .iter()
     .copied()

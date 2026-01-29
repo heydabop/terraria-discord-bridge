@@ -84,6 +84,7 @@ pub fn get() -> HashMap<&'static str, &'static str> {
         ("WrongGrass", "{0} was put on the wrong side of the grass"),
         ("Forgotten", "{0} will quickly be forgotten"),
         ("Smote", "{0} was smote"),
+        ("DirtJail", "{0} was sent to dirt jail"),
     ]
     .iter()
     .copied()
