@@ -4,6 +4,7 @@ mod terraria_pcap;
 use poise::serenity_prelude as serenity;
 use regex::Regex;
 use serde::Deserialize;
+use serenity::all::UserId;
 use serenity::client::Client;
 use serenity::http::Http;
 use serenity::model::id::ChannelId;
@@ -13,14 +14,18 @@ use sqlx::{ConnectOptions, Pool, Postgres};
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::fs;
-use std::process::Stdio;
+use std::process::{Stdio, exit};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+use tokio::signal::unix::{SignalKind, signal};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 struct Data {
     db: Pool<Postgres>,
+    admin_user_id: UserId,
+    server_dir: String,
 }
 type Error = Box<dyn std::error::Error + Send + Sync>;
 type Context<'a> = poise::Context<'a, Data, Error>;
@@ -29,6 +34,8 @@ type Context<'a> = poise::Context<'a, Data, Error>;
 struct Config {
     bot_token: String,
     bridge_channel_id: u64,
+    admin_user_id: u64,
+    server_dir: String,
     server_logfile: String,
     postgres: PgConfig,
     tcpdump: TcpDumpConfig,
@@ -64,6 +71,21 @@ async fn main() {
         toml::from_str(&fs::read_to_string("config.toml").expect("Error reading config.toml"))
             .expect("Error parsing config.toml");
 
+    let mut sigint = match signal(SignalKind::interrupt()) {
+        Ok(s) => s,
+        Err(e) => {
+            error!(%e, "Error registering SIGINT handler");
+            exit(1);
+        }
+    };
+    let mut sigterm = match signal(SignalKind::terminate()) {
+        Ok(s) => s,
+        Err(e) => {
+            error!(%e, "Error registering SIGTERM handler");
+            exit(1);
+        }
+    };
+
     let db_options = PgConnectOptions::new()
         .host(&cfg.postgres.host)
         .port(cfg.postgres.port)
@@ -83,13 +105,17 @@ async fn main() {
     let data_db = db_pool.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
-            commands: vec![deaths(), playing()],
+            commands: vec![deaths(), playing(), update(), version()],
             ..Default::default()
         })
-        .setup(|ctx, _ready, framework| {
+        .setup(move |ctx, _ready, framework| {
             Box::pin(async move {
                 poise::builtins::register_globally(ctx, &framework.options().commands).await?;
-                Ok(Data { db: data_db })
+                Ok(Data {
+                    db: data_db,
+                    admin_user_id: UserId::from(cfg.admin_user_id),
+                    server_dir: cfg.server_dir,
+                })
             })
         })
         .build();
@@ -122,12 +148,22 @@ async fn main() {
         ));
     }
 
+    let shard_manager = client.shard_manager.clone();
+    tokio::spawn(async move {
+        tokio::select! {
+            _ = sigint.recv() => {},
+            _ = sigterm.recv() => {},
+        };
+        shard_manager.shutdown_all().await;
+    });
+
     if let Err(e) = client.start().await {
         error!(error = %e, "An error occurred while running the client");
     }
 }
 
-#[poise::command(slash_command)]
+/// Show players sorted by how many times they've died
+#[poise::command(slash_command, prefix_command)]
 async fn deaths(ctx: Context<'_>) -> Result<(), Error> {
     let data = ctx.data();
     #[allow(clippy::expect_used)]
@@ -168,14 +204,170 @@ async fn deaths(ctx: Context<'_>) -> Result<(), Error> {
     }
 }
 
-#[poise::command(slash_command)]
+/// Show who's currently online
+#[poise::command(slash_command, prefix_command)]
 async fn playing(ctx: Context<'_>) -> Result<(), Error> {
+    if !Command::new("tmux")
+        .args(["send-keys", "-t", "terraria", "playing", "Enter"])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Command failed").await?;
+        return Ok(());
+    }
+
+    ctx.say("Sending...").await?;
+
+    Ok(())
+}
+
+/// Show current server version
+#[poise::command(slash_command, prefix_command)]
+async fn version(ctx: Context<'_>) -> Result<(), Error> {
+    if !Command::new("tmux")
+        .args(["send-keys", "-t", "terraria", "version", "Enter"])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Command failed").await?;
+        return Ok(());
+    }
+
+    ctx.say("Sending...").await?;
+
+    Ok(())
+}
+
+/// Update server from old version to new version
+#[poise::command(slash_command, prefix_command)]
+async fn update(
+    ctx: Context<'_>,
+    #[description = "Current server version"] old_version: String,
+    #[description = "New version to update to"] new_version: String,
+) -> Result<(), Error> {
+    // only allow admin to invocate command
+    let author_id = ctx.author().id;
+    let admin_user_id = ctx.data().admin_user_id;
+    if author_id != admin_user_id {
+        ctx.say(format!("I only listen to <@{admin_user_id}>"))
+            .await?;
+        return Ok(());
+    }
+
+    ctx.defer().await?;
+
+    let server_dir = ctx.data().server_dir.clone();
+    let zipfile = format!("terraria-server-{new_version}.zip");
+
+    // download new zip
+    if !Command::new("curl")
+        .current_dir(&server_dir)
+        .args([
+            "-o",
+            &zipfile,
+            &format!("https://terraria.org/api/download/pc-dedicated-server/{zipfile}",),
+        ])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Unable to download server zip").await?;
+        return Ok(());
+    }
+
+    // unzip new server
+    if !Command::new("unzip")
+        .current_dir(&server_dir)
+        .args([zipfile])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Unable to unzip server").await?;
+        return Ok(());
+    }
+
+    // chmod new binary
+    if !Command::new("chmod")
+        .current_dir(&server_dir)
+        .args([
+            String::from("u+x"),
+            format!("{new_version}/Linux/TerrariaServer.bin.x86_64"),
+        ])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Unable to chmod server binary").await?;
+        return Ok(());
+    }
+
+    // check if server is running
+    if Command::new("pgrep")
+        .args(["-f", "TerrariaServer.bin.x86_64"])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        // exit server if so
+        Command::new("tmux")
+            .args(["send-keys", "-t", "terraria", "exit", "Enter"])
+            .output()
+            .await?;
+
+        sleep(Duration::from_secs(5)).await;
+
+        // check if server is still running
+        if Command::new("pgrep")
+            .args(["-f", "TerrariaServer.bin.x86_64"])
+            .output()
+            .await?
+            .status
+            .success()
+        {
+            ctx.say("Unable to stop server").await?;
+            return Ok(());
+        }
+    }
+
+    // replace directory in start_server.sh
+    if !Command::new("sed")
+        .current_dir(&server_dir)
+        .args([
+            "-i",
+            &format!("s/{old_version}/{new_version}/g"),
+            "start_server.sh",
+        ])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        ctx.say("Unable to sed server script").await?;
+        return Ok(());
+    }
+
+    // restart server
     Command::new("tmux")
-        .args(["send-keys", "-t", "terraria", "playing\r\n"])
+        .args(["send-keys", "-t", "terraria", "./start_server.sh", "Enter"])
         .output()
         .await?;
 
-    ctx.say("Done").await?;
+    sleep(Duration::from_secs(10)).await;
+
+    // check version
+    Command::new("tmux")
+        .args(["send-keys", "-t", "terraria", "version", "Enter"])
+        .output()
+        .await?;
 
     Ok(())
 }
@@ -207,6 +399,8 @@ async fn send_loglines(
         Regex::new(r"^(?:: )*(?P<user>.+?) \((?:\d{1,3}\.){3}\d{1,3}:\d+\)$").unwrap();
     #[allow(clippy::unwrap_used)]
     let connected_regex = Regex::new(r"^(?:: )*(\w+ players? connected\.)$").unwrap();
+    #[allow(clippy::unwrap_used)]
+    let version_regex = Regex::new(r"^(?:: )*Terraria Server (v[0-9.]+)$").unwrap();
 
     #[allow(clippy::expect_used)]
     let mut reader = BufReader::new(tail.stdout.expect("Missing stdout on tail child"));
@@ -274,6 +468,10 @@ async fn send_loglines(
             && let Err(e) = channel_id.say(&http, &caps[1]).await
         {
             error!(error = %e, "Unable to send playing count to discord");
+        } else if let Some(caps) = version_regex.captures(line)
+            && let Err(e) = channel_id.say(&http, &caps[1]).await
+        {
+            error!(error = %e, "Unable to send version to discord");
         }
     }
 }

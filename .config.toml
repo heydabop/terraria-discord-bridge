@@ -1,6 +1,8 @@
 bot_token = "" #Just the token, no "Bot" prefix
 bridge_channel_id = 0
 server_logfile = ""
+admin_user_id = 0
+server_dir = "/home/user/terraria-server"
 
 [postgres]
 host = "localhost"

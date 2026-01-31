@@ -60,6 +60,8 @@ pub async fn parse_packets(
 
     let strings = strings::get();
 
+    info!("starting tcpdump reader");
+
     #[allow(clippy::expect_used)]
     let mut reader = pcap::Reader::new(
         tcpdump
