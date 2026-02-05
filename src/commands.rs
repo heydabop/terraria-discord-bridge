@@ -214,5 +214,61 @@ pub async fn update(
         .output()
         .await?;
 
+    ctx.say("Done").await?;
+
+    Ok(())
+}
+
+/// Restarts the server
+#[poise::command(slash_command, prefix_command)]
+pub async fn restart(ctx: Context<'_>) -> Result<(), Error> {
+    // only allow admin to invocate command
+    let author_id = ctx.author().id;
+    let admin_user_id = ctx.data().admin_user_id;
+    if author_id != admin_user_id {
+        ctx.say(format!("I only listen to <@{admin_user_id}>"))
+            .await?;
+        return Ok(());
+    }
+
+    ctx.defer().await?;
+
+    // check if server is running
+    if Command::new("pgrep")
+        .args(["-f", "TerrariaServer.bin.x86_64"])
+        .output()
+        .await?
+        .status
+        .success()
+    {
+        // exit server if so
+        Command::new("tmux")
+            .args(["send-keys", "-t", "terraria", "exit", "Enter"])
+            .output()
+            .await?;
+
+        sleep(Duration::from_secs(5)).await;
+
+        // check if server is still running
+        if Command::new("pgrep")
+            .args(["-f", "TerrariaServer.bin.x86_64"])
+            .output()
+            .await?
+            .status
+            .success()
+        {
+            ctx.say("Unable to stop server").await?;
+            return Ok(());
+        }
+    }
+
+    // restart server
+    Command::new("tmux")
+        .args(["send-keys", "-t", "terraria", "./start_server.sh", "Enter"])
+        .output()
+        .await?;
+
+    ctx.say("Done").await?;
+
     Ok(())
 }

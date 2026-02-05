@@ -106,6 +106,7 @@ async fn main() {
                 commands::playing(),
                 commands::update(),
                 commands::version(),
+                commands::restart(),
             ],
             ..Default::default()
         })
