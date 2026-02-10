@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO server_join(username) VALUES ($1)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Varchar"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "6e18f362e7bc2d6c7ebeacd9b5c791bed8b7d08dddbe9b05ee2d4f2c4cb01496"
+}
