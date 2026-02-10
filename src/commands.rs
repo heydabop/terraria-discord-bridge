@@ -2,6 +2,7 @@ use crate::Data;
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use tokio::process::Command;
+use tokio::sync::oneshot;
 use tokio::time::{Duration, sleep};
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -52,39 +53,13 @@ pub async fn deaths(ctx: Context<'_>) -> Result<(), Error> {
 /// Show who's currently online
 #[poise::command(slash_command, prefix_command)]
 pub async fn playing(ctx: Context<'_>) -> Result<(), Error> {
-    if !Command::new("tmux")
-        .args(["send-keys", "-t", "terraria", "playing", "Enter"])
-        .output()
-        .await?
-        .status
-        .success()
-    {
-        ctx.say("Command failed").await?;
-        return Ok(());
-    }
-
-    ctx.say("Sending...").await?;
-
-    Ok(())
+    send_server_command(ctx, "playing").await
 }
 
 /// Show current server version
 #[poise::command(slash_command, prefix_command)]
 pub async fn version(ctx: Context<'_>) -> Result<(), Error> {
-    if !Command::new("tmux")
-        .args(["send-keys", "-t", "terraria", "version", "Enter"])
-        .output()
-        .await?
-        .status
-        .success()
-    {
-        ctx.say("Command failed").await?;
-        return Ok(());
-    }
-
-    ctx.say("Sending...").await?;
-
-    Ok(())
+    send_server_command(ctx, "version").await
 }
 
 /// Update server from old version to new version
@@ -269,6 +244,41 @@ pub async fn restart(ctx: Context<'_>) -> Result<(), Error> {
         .await?;
 
     ctx.say("Done").await?;
+
+    Ok(())
+}
+
+async fn send_server_command(ctx: Context<'_>, command: &str) -> Result<(), Error> {
+    let rx = {
+        let channels_arc = ctx.data().command_response_channels.clone();
+        let mut channels = channels_arc.lock().await;
+        let (tx, rx) = oneshot::channel();
+        channels.push_back(tx);
+
+        if !Command::new("tmux")
+            .args(["send-keys", "-t", "terraria", command, "Enter"])
+            .output()
+            .await?
+            .status
+            .success()
+        {
+            ctx.say("⚠ Command failed").await?;
+            // remove channel that wont be used now
+            channels.pop_front();
+            return Ok(());
+        }
+
+        rx
+    };
+
+    if let Some(response) = tokio::select! {
+        res = rx => Some(res?),
+        () = sleep(Duration::from_secs(5)) => None,
+    } {
+        ctx.say(response).await?;
+    } else {
+        ctx.say("⚠ unable to read server log").await?;
+    }
 
     Ok(())
 }

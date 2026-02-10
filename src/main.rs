@@ -12,18 +12,22 @@ use serenity::model::id::ChannelId;
 use serenity::prelude::*;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::{ConnectOptions, Pool, Postgres};
+use std::collections::VecDeque;
 use std::fs;
 use std::process::{Stdio, exit};
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::signal::unix::{SignalKind, signal};
+use tokio::sync::{Mutex, oneshot};
+use tokio::time::{Duration, sleep};
 use tracing::{error, info};
 
 struct Data {
     db: Pool<Postgres>,
     admin_user_id: UserId,
     server_dir: String,
+    command_response_channels: Arc<Mutex<VecDeque<oneshot::Sender<String>>>>,
 }
 
 #[derive(Deserialize)]
@@ -99,6 +103,8 @@ async fn main() {
 
     let intents = GatewayIntents::GUILD_MESSAGES | GatewayIntents::MESSAGE_CONTENT;
     let data_db = db_pool.clone();
+    let command_response_channels = Arc::new(Mutex::new(VecDeque::new()));
+    let data_channels = command_response_channels.clone();
     let framework = poise::Framework::builder()
         .options(poise::FrameworkOptions {
             commands: vec![
@@ -117,6 +123,7 @@ async fn main() {
                     db: data_db,
                     admin_user_id: UserId::from(cfg.admin_user_id),
                     server_dir: cfg.server_dir,
+                    command_response_channels: data_channels,
                 })
             })
         })
@@ -135,6 +142,7 @@ async fn main() {
             http,
             ChannelId::new(cfg.bridge_channel_id),
             pool,
+            command_response_channels,
         ));
     }
 
@@ -170,6 +178,7 @@ async fn send_loglines(
     http: Arc<Http>,
     channel_id: ChannelId,
     db: Pool<Postgres>,
+    command_response_channels: Arc<Mutex<VecDeque<oneshot::Sender<String>>>>,
 ) {
     #[allow(clippy::expect_used)]
     #[allow(clippy::expect_used)]
@@ -253,17 +262,38 @@ async fn send_loglines(
                 error!(error = %e, "Error inserting terraria user status");
             }
         } else if let Some(caps) = playing_regex.captures(line) {
-            if let Err(e) = channel_id.say(&http, &caps["user"]).await {
-                error!(error = %e, "Unable to send playing to discord");
+            while let Some(channel) = get_response_channel(command_response_channels.clone()).await
+            {
+                // if we get a channel but its closed, try the next one
+                if let Err(e) = channel.send(caps[1].into()) {
+                    error!(error = %e, "playing receiver closed");
+                }
             }
-        } else if let Some(caps) = connected_regex.captures(line)
-            && let Err(e) = channel_id.say(&http, &caps[1]).await
-        {
-            error!(error = %e, "Unable to send playing count to discord");
-        } else if let Some(caps) = version_regex.captures(line)
-            && let Err(e) = channel_id.say(&http, &caps[1]).await
-        {
-            error!(error = %e, "Unable to send version to discord");
+        } else if let Some(caps) = connected_regex.captures(line) {
+            while let Some(channel) = get_response_channel(command_response_channels.clone()).await
+            {
+                // if we get a channel but its closed, try the next one
+                if let Err(e) = channel.send(caps[1].into()) {
+                    error!(error = %e, "connected receiver closed");
+                }
+            }
+        } else if let Some(caps) = version_regex.captures(line) {
+            while let Some(channel) = get_response_channel(command_response_channels.clone()).await
+            {
+                // if we get a channel but its closed, try the next one
+                if let Err(e) = channel.send(caps[1].into()) {
+                    error!(error = %e, "version receiver closed");
+                }
+            }
         }
+    }
+}
+
+async fn get_response_channel(
+    channels_arc: Arc<Mutex<VecDeque<oneshot::Sender<String>>>>,
+) -> Option<oneshot::Sender<String>> {
+    tokio::select! {
+        mut channels = channels_arc.lock() => channels.pop_front(),
+        () = sleep(Duration::from_secs(1)) => None
     }
 }
