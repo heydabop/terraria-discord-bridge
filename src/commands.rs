@@ -183,15 +183,7 @@ pub async fn update(
 
     sleep(Duration::from_secs(10)).await;
 
-    // check version
-    Command::new("tmux")
-        .args(["send-keys", "-t", "terraria", "version", "Enter"])
-        .output()
-        .await?;
-
-    ctx.say("Done").await?;
-
-    Ok(())
+    send_server_command(ctx, "version").await
 }
 
 /// Restarts the server
