@@ -1285,7 +1285,7 @@ dependencies = [
 [[package]]
 name = "pcap"
 version = "0.3.0"
-source = "git+https://github.com/heydabop/pcap.git#a6fad91b7b779c3da91a5d727458843fc36c7e5b"
+source = "git+https://github.com/heydabop/pcap.git#dce06046763dc68bb8f1715bb0ca1f66b7d747cb"
 dependencies = [
  "tokio",
 ]
